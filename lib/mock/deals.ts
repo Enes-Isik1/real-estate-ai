@@ -1,0 +1,52 @@
+import { Deal } from "../types/deal";
+
+export const mockDeals: Deal[] = [
+  {
+    id: "d1",
+    contactName: "Markus Hellwig",
+    contactCompany: "Hellwig Immobilien GmbH",
+    propertyAddress: "Kastanienallee 12, Berlin",
+    leadScore: 92,
+    status: "qualified",
+    updatedAt: "2026-07-13T08:14:00Z",
+    source: "email",
+  },
+  {
+    id: "d2",
+    contactName: "Sabine Kortmann",
+    propertyAddress: "Rheinuferstraße 45, Köln",
+    leadScore: 78,
+    status: "proposal",
+    updatedAt: "2026-07-12T16:40:00Z",
+    source: "upload",
+  },
+  {
+    id: "d3",
+    contactName: "Jonas Ritter",
+    contactCompany: "Ritter & Partner",
+    propertyAddress: "Marktplatz 3, München",
+    leadScore: 41,
+    status: "new",
+    updatedAt: "2026-07-12T11:02:00Z",
+    source: "email",
+  },
+  {
+    id: "d4",
+    contactName: "Elena Vogt",
+    propertyAddress: "Hafenstraße 88, Hamburg",
+    leadScore: 65,
+    status: "analyzing",
+    updatedAt: "2026-07-11T19:20:00Z",
+    source: "upload",
+  },
+  {
+    id: "d5",
+    contactName: "Thomas Brandt",
+    contactCompany: "Brandt Wohnbau",
+    propertyAddress: "Lindenweg 7, Stuttgart",
+    leadScore: 88,
+    status: "won",
+    updatedAt: "2026-07-10T09:55:00Z",
+    source: "manual",
+  },
+];
