@@ -108,43 +108,61 @@ export default function NewDealPage() {
       // Wir senden die erste hochgeladene PDF-Datei an die API
       formData.append("file", rawFiles[0])
 
+      // Wir geben dem Request einen großzügigen Timeout von 45 Sekunden
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 45000)
+
       const response = await fetch("/api/analyze", {
         method: "POST",
-        body: formData, // Sendet Multipart-Form-Data direkt ans Backend
+        body: formData,
+        signal: controller.signal,
       })
+
+      clearTimeout(timeoutId)
 
       const result = await response.json()
 
       if (response.ok && result.success) {
-        console.log("KI-Analyse erfolgreich:", result.analysis)
+        const analysisData = result.property?.analysis || result.analysis;
         
-        // Erstelle das Deal-Objekt mit den echten KI-Daten
+        if (!analysisData) {
+          throw new Error("Die KI-Antwort enthielt keine Analysedaten.");
+        }
+
+        console.log("KI-Analyse erfolgreich:", analysisData)
+        
         const finalTitle = title.trim() || "Unbenannter Deal"
         const finalClient = clientName.trim() || "Neuer Kunde"
+        const dealId = Date.now().toString()
         
         const finishedDeal = {
-          id: Date.now().toString(),
+          id: dealId,
           title: finalTitle,
           client: finalClient,
           email: clientEmail || "keine-email@dealpilot.ai",
-          price: "€ 1.500.000", // Standardwert
-          score: result.analysis.leadScore,
+          price: analysisData.estimatedPrice || "€ 1.500.000",
+          score: analysisData.leadScore || 50,
           status: "Reviewing",
           date: "Gerade eben",
-          analysis: result.analysis // Enthält executiveSummary, risks, etc.
+          analysis: analysisData
         }
 
-        // Im SessionStorage speichern, damit Dashboard & Detailseite darauf zugreifen können
+        // Im SessionStorage speichern
+        sessionStorage.setItem(`deal_${dealId}`, JSON.stringify(finishedDeal))
         sessionStorage.setItem("latest_analyzed_deal", JSON.stringify(finishedDeal))
         
-        // Zeige den Success-Screen
-        setIsSuccess(true)
+        // SOFORTIGE Weiterleitung zur Detailseite des neuen Deals!
+        router.push(`/dashboard/deals/${dealId}`)
       } else {
-        setAnalysisError(result.error || "Fehler bei der Dokumentenanalyse.")
+        throw new Error(result.error || "Fehler bei der Analyse der Dokumente.");
       }
-    } catch (err) {
-      console.error("Netzwerkfehler:", err)
-      setAnalysisError("Verbindungsfehler zur AI-Schnittstelle.")
+    } catch (err: any) {
+      console.error("Netzwerkfehler im Frontend:", err)
+      if (err.name === 'AbortError') {
+        setAnalysisError("Die Analyse hat zu lange gedauert (Timeout). Bitte versuche es mit einer etwas kleineren PDF.")
+      } else {
+        setAnalysisError(err.message || "Verbindungsfehler zur AI-Schnittstelle.")
+      }
     } finally {
       setIsAnalyzing(false)
     }

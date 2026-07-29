@@ -45,3 +45,18 @@ export interface DealAnalysis {
   // Generierter Antwortentwurf
   suggestedReply: string;
 }
+// lib/types/analysis.ts
+
+export interface DocumentChunk {
+  id: string;      // Neu: falls du die UUID-Variante nutzt
+  page: number;
+  text: string;
+}
+
+export interface AnalysisResponse {
+  // ... deine bestehenden Felder
+  analysis: any; // oder dein spezifisches Analysis-Interface
+  fileName: string;
+  pageCount: number;
+  chunks: DocumentChunk[]; // Hier fügen wir die Chunks explizit zum Response-Typ hinzu
+}

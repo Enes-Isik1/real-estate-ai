@@ -1,14 +1,54 @@
+// app/upload/page.tsx
 "use client"
 
 import React, { useState } from "react"
 import Link from "next/link"
-import { UploadCloud, FileText, ArrowRight, Sparkles, ShieldAlert } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { ArrowRight, Sparkles, Loader2, AlertCircle } from "lucide-react"
+import PDFUploader from "@/components/ui/PDFUploader"
 
 export default function UploadPage() {
-  const [files, setFiles] = useState([
-    { name: "Teilungserklaerung.pdf", size: "2.4 MB", status: "Ready" },
-    { name: "Protokoll_Eigentuemerversammlung_2022.pdf", size: "4.1 MB", status: "Ready" }
-  ])
+  const router = useRouter()
+  const [files, setFiles] = useState<File[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Funktion, die beim Klick auf "Start AI Analysis" ausführt
+  const handleStartAnalysis = async () => {
+    if (files.length === 0) {
+      setError("Keine Dateien hochgeladen. Bitte wähle mindestens eine PDF aus.")
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+
+    const formData = new FormData()
+    files.forEach((file) => {
+      formData.append("files", file) // <--- Exakt der Key, den deine route.ts erwartet!
+    })
+
+    try {
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        body: formData,
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || "Fehler bei der Analyse.")
+      }
+
+      // Bei Erfolg leiten wir zum Dashboard oder der Detailseite weiter
+      router.push("/dashboard")
+      
+    } catch (err: any) {
+      console.error("Frontend Upload Fehler:", err)
+      setError(err.message || "Ein unerwarteter Fehler ist aufgetreten.")
+      setLoading(false)
+    }
+  }
 
   return (
     <div className="space-y-8 max-w-[1000px] mx-auto pb-12">
@@ -25,44 +65,22 @@ export default function UploadPage() {
         </p>
       </div>
 
-      {/* Drag & Drop Zone */}
-      <div className="bg-white border-2 border-dashed border-gray-200 hover:border-indigo-500/50 rounded-3xl p-12 text-center transition-all cursor-pointer">
-        <div className="flex flex-col items-center space-y-3">
-          <div className="w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600">
-            <UploadCloud className="w-8 h-8" />
-          </div>
-          <div>
-            <p className="text-sm font-bold text-gray-700">Drag & drop your files here</p>
-            <p className="text-xs text-gray-400 mt-1">PDF, DOCX up to 10MB each</p>
-          </div>
-          <button className="px-4 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-600 hover:bg-slate-100 transition-all">
-            Browse Files
-          </button>
-        </div>
-      </div>
+      {/* Uploader Komponente */}
+      <PDFUploader 
+        selectedFiles={files} 
+        onFilesSelected={(newFiles) => {
+          setFiles(newFiles)
+          setError(null)
+        }} 
+      />
 
-      {/* File List */}
-      <div className="bg-white border border-gray-200/60 rounded-3xl p-6 shadow-sm space-y-4">
-        <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
-          <FileText className="w-4 h-4 text-indigo-500" /> Loaded Documents ({files.length})
-        </h3>
-        <div className="space-y-2">
-          {files.map((file, idx) => (
-            <div key={idx} className="flex items-center justify-between p-3.5 bg-slate-50 border border-gray-200/40 rounded-2xl">
-              <div className="flex items-center gap-3">
-                <FileText className="w-5 h-5 text-gray-400" />
-                <div>
-                  <p className="text-xs font-bold text-gray-700">{file.name}</p>
-                  <p className="text-[10px] text-gray-400 font-medium">{file.size}</p>
-                </div>
-              </div>
-              <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-100">
-                {file.status}
-              </span>
-            </div>
-          ))}
+      {/* Fehler-Anzeige */}
+      {error && (
+        <div className="p-4 bg-red-50 border border-red-100 rounded-2xl text-red-800 flex items-center space-x-3">
+          <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
+          <p className="text-xs font-bold">{error}</p>
         </div>
-      </div>
+      )}
 
       {/* Buttons */}
       <div className="flex justify-between items-center pt-4">
@@ -73,14 +91,25 @@ export default function UploadPage() {
           Back to Deal Setup
         </Link>
 
-        <Link 
-          href="/dashboard/analyze" 
-          className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl transition-all shadow-lg shadow-indigo-600/10 active:scale-95 cursor-pointer"
+        <button 
+          type="button"
+          onClick={handleStartAnalysis}
+          disabled={loading}
+          className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl transition-all shadow-lg shadow-indigo-600/10 active:scale-95 cursor-pointer disabled:opacity-50"
         >
-          <Sparkles className="w-4 h-4 fill-white/20" />
-          Start AI Analysis
-          <ArrowRight className="w-4 h-4" />
-        </Link>
+          {loading ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>Analysiere Dokumente...</span>
+            </>
+          ) : (
+            <>
+              <Sparkles className="w-4 h-4 fill-white/20" />
+              <span>Start AI Analysis</span>
+              <ArrowRight className="w-4 h-4" />
+            </>
+          )}
+        </button>
       </div>
     </div>
   )

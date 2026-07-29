@@ -1,119 +1,170 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { 
-  Sparkles, FileWarning, FileText, CheckCircle2, ArrowRight, 
-  Send, Loader2, Copy, Check, ArrowLeft, FileSearch, 
-  Brain, Database, BookOpen, 
+import React from "react";
+import {
+  Sparkles, FileWarning, ArrowLeft, Loader2, UploadCloud
 } from "lucide-react";
 
 import AuditCard from "./AuditCard";
 import EvidenceTimeline from "./EvidenceTimeline";
 import PDFUploader from "../../../components/ui/PDFUploader";
 import DecisionCenter from "./DecisionCenter";
-import { ExecutiveSummary } from "@/components/analysis/ExecutiveSummary"
-import { RiskAssessment } from "@/components/analysis/RiskAssessment"
-import { PositiveAspects } from "@/components/analysis/PositiveAspects"
-import { Recommendations } from "@/components/analysis/Recommendations"
-import { SellerQuestions } from "@/components/analysis/SellerQuestions"
+import { ExecutiveSummary } from "@/components/analysis/ExecutiveSummary";
+import { RiskAssessment } from "@/components/analysis/RiskAssessment";
+import { PositiveAspects } from "@/components/analysis/PositiveAspects";
+import { Recommendations } from "@/components/analysis/Recommendations";
+import { SellerQuestions } from "@/components/analysis/SellerQuestions";
+import { NegotiationPoints } from "@/components/analysis/NegotiationPoints";
+import ChatInterface from "@/app/api/analyze/chat/ChatInterface";
+import { ConflictAlert } from "@/components/analysis/ConflictAlert";
+import { AnalysisProvider, useAnalysis } from "./AnalysisContext";
 
-import { AnalysisResponse, Risk } from "@/lib/types/analysis";
-
-export default function AnalyzePage() {
-  const [isLoading, setIsLoading] = useState(false);
-  const [loadingStep, setLoadingStep] = useState(0);
-  const [copied, setCopied] = useState(false);
-  const [uploadedData, setUploadedData] = useState<AnalysisResponse | null>(null);
-
-  const loadingSteps = [
-    { text: "Parsing uploaded PDF documents...", icon: <FileSearch className="w-5 h-5 text-indigo-500" /> },
-    { text: "Extracting financial & legal clauses...", icon: <Brain className="w-5 h-5 text-purple-500" /> },
-    { text: "Cross-referencing WEG protocols...", icon: <Database className="w-5 h-5 text-amber-500" /> },
-    { text: "Generating DealPilot AI Score...", icon: <Sparkles className="w-5 h-5 text-emerald-500" /> }
-  ];
-
-  // Daten-Selektoren
-  const documents = uploadedData?.documents || [{ name: uploadedData?.fileName || "Document", pages: uploadedData?.pageCount || 1 }];
-  const leadScore = uploadedData?.analysis?.leadScore ?? 92;
-  const risks: Risk[] = uploadedData?.analysis?.Risks || [];
-  const missingDocuments = uploadedData?.analysis?.missingDocuments || [];
-  const sellerQuestions = uploadedData?.analysis?.sellerQuestions || [];
-
-  useEffect(() => {
-    if (!isLoading) return;
-    const interval = setInterval(() => setLoadingStep((prev) => Math.min(prev + 1, loadingSteps.length - 1)), 800);
-    const timeout = setTimeout(() => setIsLoading(false), 3500);
-    return () => { clearInterval(interval); clearTimeout(timeout); };
-  }, [isLoading, loadingSteps.length]);
-
-  const handleCopyText = () => {
-    const text = `Sehr geehrte(r) ${uploadedData?.clientName || "Kunde"},\n\nvielen Dank für Ihre Anfrage zu ${uploadedData?.propertyName || "der Immobilie"}.`;
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const scrollToTimeline = () => document.getElementById("evidence-timeline-section")?.scrollIntoView({ behavior: "smooth" });
+function AnalyzeContent() {
+  const {
+    isLoading,
+    error,
+    loadingStep,
+    loadingSteps,
+    uploadedData,
+    chunks,
+    selectedFiles,
+    setSelectedFiles,
+    startAnalysis,
+    resetAnalysis,
+    handleScrollToSource,
+    analysis,
+    risks,
+    missingDocuments,
+    sellerQuestions,
+    positiveFindingsStrings,
+    recommendationStrings,
+  } = useAnalysis();
 
   // 1. Initialer Upload State
-  if (!uploadedData && !isLoading) {
+  if (!uploadedData && !isLoading && !error) {
     return (
-      <div className="min-h-[75vh] flex flex-col items-center justify-center p-6 max-w-2xl mx-auto space-y-8">
-        <div className="text-center">
-          <h1 className="text-3xl font-black text-gray-900">Analyze Your Deal</h1>
-          <p className="text-gray-400 mt-2">Upload Real Estate PDFs to start the analysis.</p>
+      <div className="min-h-[75vh] flex flex-col items-center justify-center p-6 max-w-2xl mx-auto space-y-8 animate-fade-in">
+        <div className="text-center space-y-2">
+          <div className="inline-flex items-center justify-center w-12 h-12 bg-indigo-50 border border-indigo-100 rounded-2xl text-indigo-600 mb-2 shadow-sm">
+            <UploadCloud className="w-6 h-6" />
+          </div>
+          <h1 className="text-3xl font-black text-gray-900 tracking-tight">Analyze Your Deal</h1>
+          <p className="text-gray-500 text-sm font-medium">Upload Real Estate PDFs to start the deep AI analysis.</p>
         </div>
-        <div className="w-full bg-white p-6 border border-gray-200/60 rounded-3xl shadow-sm">
-          <PDFUploader onSuccess={(data) => { setUploadedData(data); setIsLoading(true); }} />
+        
+        <div className="w-full bg-white p-6 md:p-8 border border-gray-200/80 rounded-3xl shadow-enterprise space-y-6">
+          <PDFUploader 
+            selectedFiles={selectedFiles}
+            onFilesSelected={setSelectedFiles}
+          />
+
+          {selectedFiles.length > 0 && (
+            <button
+              onClick={startAnalysis}
+              className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold text-sm rounded-2xl transition-all shadow-[0_10px_25px_-5px_rgba(79,70,229,0.4)] flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+            >
+              <Sparkles className="w-4 h-4" />
+              Analyse starten ({selectedFiles.length} {selectedFiles.length === 1 ? 'Datei' : 'Dateien'})
+            </button>
+          )}
         </div>
       </div>
     );
   }
 
-  // 2. Loading State
-  if (isLoading) { /* ... (Dein existierender Loading-Code bleibt hier unverändert) ... */ }
+  // 2. Error State
+  if (error) {
+    return (
+      <div className="min-h-[75vh] flex flex-col items-center justify-center space-y-4 max-w-md mx-auto p-6 text-center animate-fade-in">
+        <div className="w-16 h-16 bg-rose-50 border border-rose-100 rounded-3xl flex items-center justify-center text-rose-500 shadow-sm">
+          <FileWarning className="w-8 h-8" />
+        </div>
+        <h2 className="text-2xl font-black text-gray-900">Analyse fehlgeschlagen</h2>
+        <p className="text-gray-500 text-sm font-medium">{error}</p>
+        <button 
+          onClick={resetAnalysis} 
+          className="mt-2 px-6 py-3 bg-gray-900 hover:bg-gray-800 text-white text-sm font-semibold rounded-2xl shadow-sm transition-all cursor-pointer"
+        >
+          Zurück zum Upload
+        </button>
+      </div>
+    );
+  }
 
-  // 3. Haupt-Analyse Dashboard
+  // 3. Loading State
+  if (isLoading) {
+    return (
+      <div className="min-h-[75vh] flex flex-col items-center justify-center gap-6 animate-fade-in">
+        <div className="relative w-16 h-16 flex items-center justify-center">
+          <div className="absolute inset-0 rounded-full border-4 border-indigo-100 animate-pulse" />
+          <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+        </div>
+        <div className="text-center space-y-1">
+          <p className="font-bold text-lg text-gray-900">{loadingSteps[loadingStep].text}</p>
+          <p className="text-xs text-gray-400 font-medium">Please wait while DealPilot processes your documents.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 4. Haupt-Analyse Dashboard (Vollständig mit allen Komponenten!)
   return (
-    <div className="space-y-8 max-w-[1400px] mx-auto pb-24 animate-fade-in-up">
-      <button onClick={() => setUploadedData(null)} className="flex items-center gap-2 text-sm font-semibold text-gray-500 hover:text-indigo-600">
-        <ArrowLeft className="w-4 h-4" /> Upload another document
+    <div className="space-y-8 max-w-[1500px] mx-auto pb-24 animate-fade-in">
+      <button 
+        onClick={resetAnalysis} 
+        className="inline-flex items-center gap-2 text-xs font-semibold text-gray-500 hover:text-indigo-600 transition-colors cursor-pointer bg-white border border-gray-200/80 px-4 py-2 rounded-xl shadow-sm"
+      >
+        <ArrowLeft className="w-3.5 h-3.5" /> Upload another document
       </button>
 
       <DecisionCenter risks={risks} />
 
-      {/* Die modularen Komponenten */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-8 space-y-6">
+          <ExecutiveSummary
+            summary={{
+              title: "Executive Summary",
+              content: analysis?.executiveSummary || ""
+            }}
+          />
+          <ConflictAlert conflicts={analysis?.crossDocumentConflicts || []} />
           
-<ExecutiveSummary 
-  summary={{ 
-    title: "Executive Summary", 
-    content: uploadedData?.analysis?.executiveSummary || "" 
-  }} 
-/>
-          <RiskAssessment risks={risks} onScrollToSource={scrollToTimeline} />
-          <PositiveAspects aspects={uploadedData?.analysis?.positiveAspects || []} />
-          <Recommendations recs={uploadedData?.analysis?.recommendations || []} />
+          <RiskAssessment risks={risks} onScrollToSource={handleScrollToSource} />
+          <PositiveAspects aspects={positiveFindingsStrings} />
+          <Recommendations recs={recommendationStrings} />
           <SellerQuestions questions={sellerQuestions} />
+          <NegotiationPoints points={analysis?.negotiationPoints || []} />
           
           <div id="evidence-timeline-section">
-            <EvidenceTimeline data={uploadedData?.analysis?.timeline} />
+            <EvidenceTimeline data={analysis?.timeline} />
           </div>
         </div>
 
         <div className="lg:col-span-4 space-y-6">
           <AuditCard />
-          {/* Missing Documents Box */}
-          <div className="bg-white border rounded-3xl p-6 shadow-sm space-y-4">
-            <h3 className="font-bold flex items-center gap-2"><FileWarning className="w-5 h-5 text-rose-500" /> Missing Docs</h3>
-            <div className="grid grid-cols-2 gap-2">
-              {missingDocuments.map((d, i) => <div key={i} className="p-2 bg-rose-50 rounded-xl text-xs font-bold">{d.name}</div>)}
+          <ChatInterface relevantChunks={chunks} />
+          <div className="bg-white border border-gray-200/80 rounded-3xl p-6 shadow-enterprise space-y-4">
+            <h3 className="font-bold text-gray-900 flex items-center gap-2 text-sm">
+              <FileWarning className="w-4 h-4 text-rose-500" /> Missing Docs
+            </h3>
+            <div className="grid grid-cols-2 gap-2.5">
+              {missingDocuments.map((d: any, i: number) => (
+                <div key={i} className="p-2.5 bg-rose-50/80 border border-rose-100 rounded-2xl text-xs font-bold text-rose-700">
+                  {d.name}
+                </div>
+              ))}
             </div>
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+export default function AnalyzePage() {
+  return (
+    <AnalysisProvider>
+      <AnalyzeContent />
+    </AnalysisProvider>
   );
 }

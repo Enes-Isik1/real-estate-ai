@@ -1,160 +1,300 @@
 // app/api/analyze/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import pdf from "pdf-parse-fork";
-import { generateObject } from "ai";
-import { google } from "@ai-sdk/google";
-import { z } from "zod";
+import { PropertyAsset } from "@/lib/types/analysis";
+import { supabaseAdmin } from "@/lib/supabase-admin";
+import { analyzeCoreData } from "@/lib/ai-engine";
+import { createClient } from "@/lib/utils/supabase/server";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // Sicherheitspuffer für Next.js
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB Limit
-
-const AnalysisSchema = z.object({
-  leadScore: z.number().min(0).max(100),
-  executiveSummary: z.string(),
-  confidence: z.number().min(0).max(10),
-  overallRecommendation: z.string(),
-  verificationRequired: z.boolean(),
-  topRisks: z.array(z.object({
-    id: z.string(),
-    severity: z.enum(["High", "Medium", "Low"]),
-    title: z.string(),
-    whyItMatters: z.string(),
-    sourcePages: z.array(z.number()),
-    sourceDocument: z.string(),
-    confidence: z.number(),
-  })),
-  positiveFindings: z.array(z.object({
-    title: z.string(),
-    description: z.string(),
-    sourcePages: z.array(z.number()),
-  })),
-  missingDocuments: z.array(z.object({
-    name: z.string(),
-    required: z.boolean(),
-  })),
-  negotiationPoints: z.array(z.object({
-    title: z.string(),
-    argument: z.string(),
-    leverageScore: z.number(),
-  })),
-  sellerQuestions: z.array(z.object({
-    question: z.string(),
-    context: z.string(),
-  })),
-  timeline: z.array(z.object({
-    event: z.string(),
-    date: z.string(),
-  })),
-});
 
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
-    const file = formData.get("file") as File | null;
 
-    // 1. Validierung
-    if (!file) {
-      return NextResponse.json({ error: "Keine Datei hochgeladen." }, { status: 400 });
-    }
-    if (file.size > MAX_FILE_SIZE) {
-      return NextResponse.json({ error: "Datei zu groß (max 10MB)." }, { status: 413 });
-    }
-    if (file.type !== "application/pdf" && !file.name.endsWith(".pdf")) {
-      return NextResponse.json({ error: "Ungültiges Dateiformat." }, { status: 400 });
-    }
+    // Wir fangen sowohl "file" als auch "files" ab, um jegliche Diskrepanzen zu verhindern
+    const rawFiles =
+      formData.getAll("file").length > 0
+        ? formData.getAll("file")
+        : formData.getAll("files");
 
-    // 2. Datei in Buffer umwandeln
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    const files = rawFiles as File[];
+    console.log("🔍 Anzahl gefundener Dateien im Backend:", files.length);
 
-    // 3. Echte Textextraktion mit Fehlerbehandlung
-    let pdfData;
-    try {
-      pdfData = await pdf(buffer);
-    } catch (e) {
-      return NextResponse.json({ error: "PDF-Parsing fehlgeschlagen. Datei ist beschädigt." }, { status: 422 });
-    }
-    
-    const rawText = pdfData.text || "";
-    
-    // Inhalts-Validierung mit Mindestlänge für sinnvolle Analyse
-    if (rawText.trim().length < 50) {
-      return NextResponse.json({ error: "Dokument enthält nicht genügend Text zur Analyse." }, { status: 422 });
+    if (files.length === 0) {
+      return NextResponse.json(
+        { error: "Keine Dateien hochgeladen." },
+        { status: 400 },
+      );
     }
 
-    // Strukturierte Textvorbereitung für die KI & Frontend Chunks
-    const pages = rawText.split(/\f/);
-    const textChunks = pages.map((content, index) => ({
-      page: index + 1,
-      text: content.trim()
-    })).filter(chunk => chunk.text.length > 0);
+    let structuredContext = "";
+    const fileNames = [];
+    const allChunks: any[] = []; // Hier sammeln wir alle echten Chunks mit Seitennummer
 
-    const structuredText = textChunks
-      .map((c) => `--- SEITE ${c.page} ---\n${c.text}`)
-      .join("\n\n");
+    // --- PARALLELES PDF-PARSEN FÜR MAXIMALE GESCHWINDIGKEIT ---
+    const fileProcessingPromises = files.map(async (file) => {
+      if (file.size > MAX_FILE_SIZE) {
+        throw new Error(`Datei ${file.name} ist zu groß (max 10MB).`);
+      }
 
-    let aiAnalysis;
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const fileHeader = buffer.toString("utf8", 0, 20);
 
-    // 5. Echte KI-Analyse mit Gemini 1.5 Flash (Enterprise Level)
-    try {
-      const { object } = await generateObject({
-        model: google("gemini-1.5-flash"),
-        schema: AnalysisSchema,
-        prompt: `
-          Du bist ein hochspezialisierter Senior Real Estate Analyst mit 20 Jahren Erfahrung in der Due Diligence.
-          
-          DEINE AUFGABE:
-          Analysiere die bereitgestellten Dokumente (unten) und erstelle eine fundierte Entscheidungsgrundlage.
-          
-          STRICT RULES:
-          1. EVIDENZ-BASIERT: Erfinde NIEMALS Informationen. Wenn eine Information nicht im Dokument steht, schreibe "Nicht dokumentiert" oder lasse das Feld leer/neutral.
-          2. QUELLEN-PFLICHT: Für jedes Risiko und jeden positiven Punkt MUSST du die Seitenzahl(en) angeben (sourcePages). Nutze dabei die im Text markierten Seitentrennzeichen.
-          3. PROFESSIONALITÄT: Schreibe präzise, faktenorientiert und direkt. Keine Prosa, keine Füllwörter.
-          4. VALIDIERUNG: Wenn ein Risiko kritisch ist oder Dokumente fehlen, setze 'verificationRequired' auf true.
-          
-          ANALYSESCHEMA:
-          - Fülle jedes Feld des JSON-Schemas strikt aus.
-          - 'sourcePages' müssen ein Array von Zahlen sein (z.B. [1, 2]).
-          - 'confidence' ist ein Wert von 0-10 basierend auf der Klarheit der Textstelle.
-          
-          HIER SIND DIE DOKUMENTENDATEN ZUR ANALYSE (Strukturiert mit Seitenbezug):
-          """
-          ${structuredText}
-          """
-        `,
-      });
-      aiAnalysis = object;
-      console.log("✅ Enterprise-Analyse erfolgreich generiert.");
-    } catch (aiError: any) {
-      console.warn("⚠️ KI-API fehlgeschlagen, nutze Fallback-Daten...", aiError.message);
-      
-      aiAnalysis = {
-        leadScore: 78,
-        executiveSummary: "Das Objekt bietet eine gute wirtschaftliche Perspektive.",
-        confidence: 8,
-        overallRecommendation: "Weiterführende Prüfung der Protokolle empfohlen.",
-        verificationRequired: true,
-        topRisks: [{ id: "r1", severity: "High", title: "Rücklage unterdurchschnittlich", whyItMatters: "Geringe Rücklagen.", sourcePages: [2], sourceDocument: "Exposé", confidence: 9 }],
-        positiveFindings: [{ title: "Lage", description: "Sehr gute Mikrolage", sourcePages: [1] }],
-        missingDocuments: [{ name: "Versammlungsprotokolle", required: true }],
-        negotiationPoints: [{ title: "Rücklagen", argument: "Niedrige Rücklagen als Preisabschlag", leverageScore: 7 }],
-        sellerQuestions: [{ question: "Dachzustand?", context: "Instandhaltungszyklus unklar." }],
-        timeline: [{ event: "Teilungserklärung", date: "2015-04-12" }]
+      if (!fileHeader.includes("PDF") && !fileHeader.includes("pdf")) {
+        console.warn(
+          `Überspringe Datei ${file.name}, da kein PDF-Header gefunden wurde.`,
+        );
+        return null;
+      }
+
+      const pdfData = await pdf(buffer);
+      return {
+        name: file.name,
+        text: pdfData.text || "",
       };
+    });
+
+    const results = await Promise.all(fileProcessingPromises);
+
+    // Ergebnisse verarbeiten und Chunks aufbauen
+    for (const result of results) {
+      if (!result) continue;
+
+      const { name, text: rawText } = result;
+      fileNames.push(name);
+
+      // --- ENTERPRISE CHUNKING & SEITENERKENNUNG ---
+      const pages = rawText.split(/\f/); // Trennung nach PDF-Seitenumbruch, falls vorhanden
+
+      if (pages.length > 1) {
+        // Echte seitenbasierte Schleife
+        pages.forEach((pageText, pageIndex) => {
+          const trimmed = pageText.trim();
+          if (trimmed.length > 0) {
+            const pageNum = pageIndex + 1;
+            allChunks.push({
+              id: crypto.randomUUID(),
+              documentName: name,
+              text: trimmed,
+              pageNumber: pageNum,
+            });
+            structuredContext += `[DOKUMENT: ${name} | SEITE ${pageNum}]\n${trimmed}\n\n`;
+          }
+        });
+      } else {
+        // Fallback: Intelligentes Block-Chunking, falls keine harten Seitenumbrüche da sind
+        const chunkSize = 2000;
+        for (let i = 0; i < rawText.length; i += chunkSize) {
+          const chunkText = rawText.substring(i, i + chunkSize);
+          const estimatedPage = Math.floor(i / chunkSize) + 1;
+          allChunks.push({
+            id: crypto.randomUUID(),
+            documentName: name,
+            text: chunkText,
+            pageNumber: estimatedPage,
+          });
+          structuredContext += `[DOKUMENT: ${name} | BLOCK ${estimatedPage}]\n${chunkText}\n\n`;
+        }
+      }
     }
+
+    if (fileNames.length === 0) {
+      return NextResponse.json(
+        { error: "Keine gültigen PDFs gefunden." },
+        { status: 400 },
+      );
+    }
+
+    console.log("🚀 Starte Blitz-Analyse mit der KI...");
+    const startTime = Date.now();
+
+    // KI-AUFRUF mit dem vollständigen, strukturierten Kontext aller Seiten
+    const coreAnalysis = await analyzeCoreData(structuredContext);
+
+    console.log(
+      `⚡ KI-Analyse erfolgreich in ${Date.now() - startTime}ms abgeschlossen.`,
+    );
+
+    const sanitizedLeadScore = Math.round(Number(coreAnalysis.leadScore) || 50);
+    const finalStatus = sanitizedLeadScore > 70 ? "Ready" : "Needs Review";
+
+    // Einheitliches Analyse-Objekt für das Frontend
+    const aiAnalysis = {
+      leadScore: sanitizedLeadScore,
+      executiveSummary:
+        coreAnalysis.executiveSummary || "Keine Zusammenfassung verfügbar.",
+      overallRecommendation:
+        coreAnalysis.overallRecommendation || "Solides Objekt.",
+      confidence: 8,
+      verificationRequired: false,
+      topRisks: coreAnalysis.topRisks || [],
+      crossDocumentConflicts: [],
+      positiveFindings: coreAnalysis.positiveFindings || [],
+      missingDocuments: coreAnalysis.missingDocuments || [],
+      negotiationPoints: coreAnalysis.negotiationPoints || [],
+      sellerQuestions: [],
+      timeline: [],
+    };
+
+    const propertyAsset: PropertyAsset = {
+      id: crypto.randomUUID(),
+      name: fileNames[0]
+        ? fileNames[0].replace(/\.[^/.]+$/, "")
+        : "Neue Immobilie",
+      createdAt: new Date().toISOString(),
+      files: fileNames,
+      analysis: aiAnalysis,
+      timeline: [],
+      decisionCenter: {
+        score: sanitizedLeadScore,
+        status: finalStatus,
+        summary: aiAnalysis.overallRecommendation,
+      },
+    };
+
+    // 1. Supabase Server-Client initialisieren, um den eingeloggten User zu ermitteln
+    const supabase = await createClient(); // (Stelle sicher, dass du createClient von "@/utils/supabase/server" oben importierst)
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      return NextResponse.json(
+        { error: "Nicht autorisiert. Bitte loggen Sie sich ein." },
+        { status: 401 },
+      );
+    }
+
+    // 2. Neuen Deal in Supabase anlegen INKL. user_id
+    const { data: newDeal, error: dealError } = await supabase
+      .from("deals")
+      .insert([
+        {
+          title: propertyAsset.name,
+          status: "Analyzing",
+          user_id: user.id, // <-- HIER WIRD DIE USER-ID JETZT SAUBER GESPEICHERT!
+        },
+      ])
+      .select()
+      .single();
+
+    if (dealError) {
+      console.error("Fehler beim Speichern des Deals:", dealError);
+    }
+
+    const dealId = newDeal?.id;
+
+    if (dealId) {
+      // 3. Job-Eintrag registrieren
+      await supabase.from("jobs").insert([
+        {
+          deal_id: dealId,
+          status: "completed",
+        },
+      ]);
+
+      // 4. Zugehörige Dokumente speichern
+      const documentInserts = fileNames.map((fileName) => ({
+        deal_id: dealId,
+        filename: fileName,
+        document_type: "Unbekannt",
+        upload_date: new Date().toISOString(),
+      }));
+
+      await supabase.from("documents").insert(documentInserts);
+
+      // 5. Versionsnummer ermitteln
+      const { count: existingAnalysesCount } = await supabase
+        .from("analyses")
+        .select("*", { count: "exact", head: true })
+        .eq("deal_id", dealId);
+
+      const nextVersion = (existingAnalysesCount || 0) + 1;
+
+      // 6. Analyseergebnis speichern
+      const { data: savedAnalysis } = await supabase
+        .from("analyses")
+        .insert([
+          {
+            deal_id: dealId,
+            version: nextVersion,
+            lead_score: sanitizedLeadScore,
+            executive_summary: aiAnalysis.executiveSummary,
+            overall_recommendation: aiAnalysis.overallRecommendation,
+            raw_json: aiAnalysis,
+          },
+        ])
+        .select()
+        .single();
+
+      // 7. Risiken abspeichern
+      if (
+        aiAnalysis.topRisks &&
+        aiAnalysis.topRisks.length > 0 &&
+        savedAnalysis
+      ) {
+        const riskInserts = aiAnalysis.topRisks.map((risk: any) => ({
+          analysis_id: savedAnalysis.id,
+          deal_id: dealId,
+          severity: risk.severity || "Medium",
+          title: risk.title,
+          why_it_matters: risk.whyItMatters,
+          confidence: risk.confidence || 90,
+          page_number: risk.source?.pageNumber || risk.page || 1,
+        }));
+
+        await supabase.from("risks").insert(riskInserts);
+      }
+    }
+
+    propertyAsset.id = dealId || propertyAsset.id;
+
+    await supabase
+      .from("deals")
+      .update({ status: finalStatus })
+      .eq("id", dealId);
+
+    propertyAsset.decisionCenter.status = finalStatus;
 
     return NextResponse.json({
       success: true,
-      fileName: file.name,
-      fileSize: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
-      pageCount: pdfData.numpages || 1,
-      analysis: aiAnalysis,
-      chunks: textChunks 
+      property: propertyAsset,
+      chunks: allChunks, // Hier werden nun die echten, seitenbasierten Chunks übergeben
     });
-
   } catch (error: any) {
-    console.error("Schwerwiegender Fehler:", error);
-    return NextResponse.json({ error: "Fehler: " + error.message }, { status: 500 });
+    console.error("🔥 KRITISCHER API-FEHLER:", error);
+
+    let errorMessage =
+      "Die Analyse konnte nicht abgeschlossen werden. Bitte versuchen Sie es erneut.";
+
+    // Spezifische Übersetzung technischer Fehler für den Nutzer
+    if (
+      error?.message?.includes("API_KEY") ||
+      error?.message?.includes("Gemini") ||
+      error?.status === 429
+    ) {
+      errorMessage =
+        "Der KI-Dienst ist derzeit überlastet oder nicht erreichbar. Bitte versuchen Sie es in wenigen Minuten erneut.";
+    } else if (
+      error?.message?.includes("Supabase") ||
+      error?.code?.startsWith("PGRST")
+    ) {
+      errorMessage =
+        "Datenbankfehler: Die Analyseergebnisse konnten nicht gespeichert werden.";
+    } else if (
+      error?.message &&
+      !error.message.includes("JSON") &&
+      !error.message.includes("fetch")
+    ) {
+      errorMessage = error.message;
+    }
+
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }
