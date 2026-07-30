@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     // In Next.js 15+ müssen params gepatched/awaitet werden
@@ -14,39 +14,46 @@ export async function GET(
     const dealId = resolvedParams.id;
 
     if (!dealId) {
-      return NextResponse.json({ error: "Keine Deal-ID übergeben." }, { status: 400 });
+      return NextResponse.json(
+        { error: "Keine Deal-ID übergeben." },
+        { status: 400 },
+      );
     }
 
     // 1. Deal abrufen
     const { data: deal, error: dealError } = await supabaseAdmin
-      .from('deals')
-      .select('*')
-      .eq('id', dealId)
+      .from("deals")
+      .select("*")
+      .eq("id", dealId)
       .single();
 
     if (dealError || !deal) {
-      return NextResponse.json({ error: "Deal nicht gefunden." }, { status: 404 });
+      return NextResponse.json(
+        { error: "Deal nicht gefunden." },
+        { status: 404 },
+      );
     }
 
-    // 2. Zugehörige Analyse abrufen (neueste Version zuerst)
+    // 2. Zugehörige Analyse abrufen (neueste Version zuerst, .maybeSingle() verhindert Crashes wenn keine existiert)
     const { data: analysis } = await supabaseAdmin
-      .from('analyses')
-      .select('*')
-      .eq('deal_id', dealId)
-      .order('version', { ascending: false })
-      .limit(1)
-      .single();
+      .from("analyses")
+      .select("*")
+      .eq("deal_id", dealId)
+      .order("version", { ascending: false })
+      .maybeSingle();
 
     // 3. Zugehörige Dokumente abrufen
     const { data: documents } = await supabaseAdmin
-      .from('documents')
-      .select('*')
-      .eq('deal_id', dealId);
+      .from("documents")
+      .select("*")
+      .eq("deal_id", dealId);
 
     // 4. In unser gewohntes PropertyAsset-Format mappen
     const aiAnalysis = analysis?.raw_json || {
       leadScore: 50,
-      executiveSummary: analysis?.executive_summary || "",
+      executiveSummary:
+        analysis?.executive_summary ||
+        "Analyse wird vorbereitet oder liegt noch nicht vor.",
       overallRecommendation: analysis?.overall_recommendation || "",
       topRisks: [],
       positiveFindings: [],
@@ -56,7 +63,7 @@ export async function GET(
 
     const propertyAsset = {
       id: deal.id,
-      name: deal.title,
+      name: deal.title || "Unbenannter Deal",
       createdAt: deal.created_at,
       files: documents ? documents.map((d: any) => d.filename) : [],
       analysis: aiAnalysis,
@@ -64,14 +71,60 @@ export async function GET(
       decisionCenter: {
         score: analysis?.lead_score || 50,
         status: deal.status || "Reviewing",
-        summary: deal.status
-      }
+        summary: deal.status || "",
+      },
     };
 
     return NextResponse.json({ success: true, property: propertyAsset });
-
   } catch (error: any) {
     console.error("🔥 Fehler beim Laden des Deals:", error);
-    return NextResponse.json({ error: error?.message || "Serverfehler" }, { status: 500 });
+    return NextResponse.json(
+      { error: error?.message || "Serverfehler" },
+      { status: 500 },
+    );
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const resolvedParams = await params;
+    const dealId = resolvedParams.id;
+
+    if (!dealId) {
+      return NextResponse.json(
+        { success: false, error: "Keine Deal-ID übergeben." },
+        { status: 400 },
+      );
+    }
+
+    // 1. Zugehörige Analysen manuell löschen (falls kein DB-Cascade greift)
+    await supabaseAdmin.from("analyses").delete().eq("deal_id", dealId);
+
+    // 2. Zugehörige Dokumente löschen
+    await supabaseAdmin.from("documents").delete().eq("deal_id", dealId);
+
+    // 3. Deal selbst löschen
+    const { error } = await supabaseAdmin
+      .from("deals")
+      .delete()
+      .eq("id", dealId);
+
+    if (error) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    console.error("🔥 Fehler beim Löschen des Deals:", error);
+    return NextResponse.json(
+      { success: false, error: error?.message || "Serverfehler" },
+      { status: 500 },
+    );
   }
 }

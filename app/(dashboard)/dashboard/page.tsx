@@ -1,44 +1,53 @@
-"use client"
+"use client";
 
-import React, { useState, useEffect, useRef } from "react"
-import { useRouter } from "next/navigation"
-import { 
-  Search, 
-  ChevronRight, 
-  FileText, 
-  Sparkles, 
+import React, { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+import {
+  Search,
+  ChevronRight,
+  FileText,
+  Sparkles,
   User,
   Clock,
   Plus,
   Sliders,
-  Globe
-} from "lucide-react"
+  Globe,
+} from "lucide-react";
 
 // TypeScript Interface für einen Deal
 interface Deal {
-  id: string
-  title: string
-  client: string
-  email: string
-  score: number
-  status: string
-  date: string
-  price: string
-  files?: string[]
+  id: string;
+  title: string;
+  client: string;
+  email: string;
+  score: number;
+  status: string;
+  date: string;
+  price: string;
+  files?: string[];
   analysis?: {
-    executiveSummary: string
-    topRisks: Array<{ title: string; whyItMatters: string; sourceDoc?: string; page?: number }>
-    negotiationPoints?: Array<{ title: string; argument: string }>
-    missingDocuments?: Array<{ title: string; category: string; reason: string }>
-  }
+    executiveSummary: string;
+    topRisks: Array<{
+      title: string;
+      whyItMatters: string;
+      sourceDoc?: string;
+      page?: number;
+    }>;
+    negotiationPoints?: Array<{ title: string; argument: string }>;
+    missingDocuments?: Array<{
+      title: string;
+      category: string;
+      reason: string;
+    }>;
+  };
 }
 
 // Hilfskomponente für den "New Deal" Button
 function InlineNewDealButton() {
-  const router = useRouter()
+  const router = useRouter();
 
   return (
-    <button 
+    <button
       onClick={() => router.push("/dashboard/new-deal")}
       className="relative group overflow-hidden bg-gradient-to-b from-indigo-500 via-indigo-600 to-indigo-700 hover:from-indigo-400 hover:to-indigo-600 text-white font-bold text-sm py-2.5 px-5 rounded-2xl transition-all duration-300 shadow-[0_10px_25px_-5px_rgba(79,70,229,0.4)] hover:shadow-[0_14px_30px_-5px_rgba(79,70,229,0.5)] -translate-y-[1px] hover:-translate-y-[3px] active:translate-y-0 flex items-center justify-center gap-2 border-t border-indigo-400/30 active:scale-95 cursor-pointer"
     >
@@ -46,7 +55,7 @@ function InlineNewDealButton() {
       <Plus className="w-4 h-4 stroke-[3] transition-transform duration-300 group-hover:rotate-90" />
       <span className="tracking-wide">New Deal</span>
     </button>
-  )
+  );
 }
 
 const INITIAL_DEALS: Deal[] = [
@@ -58,7 +67,7 @@ const INITIAL_DEALS: Deal[] = [
     score: 94,
     status: "Reviewing",
     date: "Today",
-    price: "€4,250,000"
+    price: "€4,250,000",
   },
   {
     id: "2",
@@ -68,7 +77,7 @@ const INITIAL_DEALS: Deal[] = [
     score: 88,
     status: "Missing Docs",
     date: "Yesterday",
-    price: "€2,890,000"
+    price: "€2,890,000",
   },
   {
     id: "3",
@@ -78,7 +87,7 @@ const INITIAL_DEALS: Deal[] = [
     score: 72,
     status: "Contacted",
     date: "3 days ago",
-    price: "€640,000"
+    price: "€640,000",
   },
   {
     id: "4",
@@ -88,98 +97,144 @@ const INITIAL_DEALS: Deal[] = [
     score: 91,
     status: "Reviewing",
     date: "4 days ago",
-    price: "€1,850,000"
-  }
-]
+    price: "€1,850,000",
+  },
+];
 
 export default function DashboardPage() {
-  const router = useRouter()
-  
-  const [deals, setDeals] = useState<Deal[]>(INITIAL_DEALS)
-  const [searchQuery, setSearchQuery] = useState("")
-  const [statusFilter, setStatusFilter] = useState("Show all")
-  const searchInputRef = useRef<HTMLInputElement>(null)
+  const router = useRouter();
 
-  // (Der restliche Code bleibt exakt wie er ist ab Zeile "const getGreeting = ...")
+  const [deals, setDeals] = useState<Deal[]>(INITIAL_DEALS);
+  const [loadingDeals, setLoadingDeals] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("Show all");
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const getGreeting = () => {
-    const hour = new Date().getHours()
-    if (hour < 12) return "Good morning"
-    if (hour < 18) return "Good afternoon"
-    return "Good evening"
-  }
+    const hour = new Date().getHours();
+    if (hour < 12) return "Good morning";
+    if (hour < 18) return "Good afternoon";
+    return "Good evening";
+  };
 
+  // Enterprise: Echte Deals aus der Datenbank, SessionStorage (neue Deals) & statische Fallbacks kombinieren
   useEffect(() => {
-    const storedDeal = sessionStorage.getItem("latest_analyzed_deal")
-    
-    if (storedDeal) {
+    async function fetchUserDeals() {
       try {
-        const parsedDeal = JSON.parse(storedDeal)
-        
-        setDeals((prevDeals) => {
-          const exists = prevDeals.some(deal => deal.id === parsedDeal.id)
-          if (exists) return prevDeals
-          
-          return [parsedDeal, ...prevDeals]
-        })
+        let dbDeals: Deal[] = [];
+        const res = await fetch("/api/deals");
+        const data = await res.json();
+
+        if (data.success && data.properties && data.properties.length > 0) {
+          dbDeals = data.properties.map((prop: any) => ({
+            id: prop.id,
+            title: prop.title || prop.name || "Unbenannter Deal", // Prüft zuerst den echten DB-Titel
+            client: prop.client_name || prop.client || "Mandant", // Korrekt auf client_name gemappt
+            email: prop.client_email || prop.email || "kontakt@dealpilot.ai", // Korrekt auf client_email gemappt
+            score: prop.decisionCenter?.score || prop.analysis?.leadScore || 85,
+            status: prop.decisionCenter?.status || prop.status || "Reviewing",
+            date: new Date(
+              prop.createdAt || prop.created_at || Date.now(),
+            ).toLocaleDateString("de-DE"),
+            price: prop.price || "€1,000,000",
+            files: prop.files || [],
+            analysis: prop.analysis,
+          }));
+        }
+
+        // 1. Basis-Liste: Entweder echte DB-Deals oder die statischen INITIAL_DEALS als Fundament
+        let combined = dbDeals.length > 0 ? dbDeals : INITIAL_DEALS;
+
+        // Wenn die DB genutzt wird, wollen wir trotzdem die statischen Demo-Deals als Basis behalten,
+        // falls keine echten da sind, oder sie gemeinsam anzeigen.
+        // Hier stellen wir sicher, dass INITIAL_DEALS immer da sind, falls die DB leer ist:
+        if (dbDeals.length === 0) {
+          combined = INITIAL_DEALS;
+        } else {
+          // Optional: Falls du Datenbank-Deals UND die statischen Demo-Deals gleichzeitig sehen willst:
+          // combined = [...dbDeals, ...INITIAL_DEALS];
+        }
+
+        // 2. Frisch erstellten Deal aus dem SessionStorage (nach Analyse) hinzufügen
+        const storedDeal = sessionStorage.getItem("latest_analyzed_deal");
+        if (storedDeal) {
+          try {
+            const parsedDeal = JSON.parse(storedDeal);
+            // Prüfen, ob er nicht schon in der Liste ist
+            if (!combined.some((d) => d.id === parsedDeal.id)) {
+              combined = [parsedDeal, ...combined];
+            }
+          } catch (e) {
+            console.error("Fehler beim Parsen des SessionStorage Deals:", e);
+          }
+        }
+
+        setDeals(combined);
       } catch (e) {
-        console.error("Fehler beim Laden des echten Deals aus dem SessionStorage:", e)
+        console.error("Fehler beim Laden der Deals:", e);
+
+        // Fallback bei Netzwerkfehlern: Statische Deals + evtl. SessionStorage
+        let fallbackDeals = INITIAL_DEALS;
+        const storedDeal = sessionStorage.getItem("latest_analyzed_deal");
+        if (storedDeal) {
+          try {
+            const parsedDeal = JSON.parse(storedDeal);
+            fallbackDeals = [parsedDeal, ...fallbackDeals];
+          } catch (err) {}
+        }
+        setDeals(fallbackDeals);
+      } finally {
+        setLoadingDeals(false);
       }
     }
-  }, [])
+
+    fetchUserDeals();
+  }, []);
 
   useEffect(() => {
-    router.prefetch("/dashboard/analyze")
-  }, [router])
+    router.prefetch("/dashboard/analyze");
+  }, [router]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault()
-        searchInputRef.current?.focus()
+        e.preventDefault();
+        searchInputRef.current?.focus();
       }
-    }
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [])
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
-  const filteredDeals = deals.filter(deal => {
-    const matchesSearch = deal.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          deal.client.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          deal.status.toLowerCase().includes(searchQuery.toLowerCase())
-    
-    if (statusFilter === "Show all") return matchesSearch
-    if (statusFilter === "Reviewing") return matchesSearch && deal.status === "Reviewing"
-    if (statusFilter === "Missing Docs") return matchesSearch && deal.status === "Missing Docs"
-    if (statusFilter === "Contacted") return matchesSearch && deal.status === "Contacted"
-    return matchesSearch
-  })
+  const filteredDeals = deals.filter((deal) => {
+    const matchesSearch =
+      deal.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      deal.client.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      deal.status.toLowerCase().includes(searchQuery.toLowerCase());
+
+    if (statusFilter === "Show all") return matchesSearch;
+    if (statusFilter === "Reviewing")
+      return matchesSearch && deal.status === "Reviewing";
+    if (statusFilter === "Missing Docs")
+      return matchesSearch && deal.status === "Missing Docs";
+    if (statusFilter === "Contacted")
+      return matchesSearch && deal.status === "Contacted";
+    return matchesSearch;
+  });
 
   return (
-    <div className="space-y-8 p-6 md:p-10 max-w-[1600px] mx-auto animate-fade-in">
-      
-      {/* HEADER SECTION */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-200/60 pb-6">
-        <div>
-          <h1 className="text-3xl font-black text-gray-900 tracking-tight flex items-center gap-2">
-            {getGreeting()}, Enes <span className="animate-bounce-slow">👋</span>
-          </h1>
-          <p className="text-gray-500 text-sm mt-1 font-medium">
-            You have <span className="text-indigo-600 font-bold">3 hot leads</span> waiting for your review today.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <InlineNewDealButton />
-        </div>
-      </div>
-
+    <div className="space-y-8 animate-fade-in">
       {/* KPI CARDS SECTION */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         {/* Card 1 */}
         <div className="bg-white border border-gray-200/80 rounded-2xl p-5 shadow-enterprise hover:shadow-enterprise-hover transition-all duration-300">
           <div className="flex justify-between items-start">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">New Inquiries</span>
-            <span className="text-xs font-bold px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full">This Week</span>
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+              New Inquiries
+            </span>
+            <span className="text-xs font-bold px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full">
+              This Week
+            </span>
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-black text-gray-900">14</span>
@@ -190,8 +245,12 @@ export default function DashboardPage() {
         {/* Card 2 */}
         <div className="bg-white border border-gray-200/80 rounded-2xl p-5 shadow-enterprise hover:shadow-enterprise-hover transition-all duration-300">
           <div className="flex justify-between items-start">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Hot Leads</span>
-            <span className="text-xs font-bold px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full">High Score</span>
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+              Hot Leads
+            </span>
+            <span className="text-xs font-bold px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full">
+              High Score
+            </span>
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-black text-gray-900">6</span>
@@ -201,8 +260,12 @@ export default function DashboardPage() {
         {/* Card 3 */}
         <div className="bg-white border border-gray-200/80 rounded-2xl p-5 shadow-enterprise hover:shadow-enterprise-hover transition-all duration-300">
           <div className="flex justify-between items-start">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Missing Docs</span>
-            <span className="text-xs font-bold px-2 py-0.5 bg-rose-50 text-rose-600 rounded-full">Action Req.</span>
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+              Missing Docs
+            </span>
+            <span className="text-xs font-bold px-2 py-0.5 bg-rose-50 text-rose-600 rounded-full">
+              Action Req.
+            </span>
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-black text-gray-900">3</span>
@@ -213,8 +276,12 @@ export default function DashboardPage() {
         {/* Card 4 */}
         <div className="bg-white border border-gray-200/80 rounded-2xl p-5 shadow-enterprise hover:shadow-enterprise-hover transition-all duration-300">
           <div className="flex justify-between items-start">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Follow-ups Today</span>
-            <span className="text-xs font-bold px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full">Schedule</span>
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+              Follow-ups Today
+            </span>
+            <span className="text-xs font-bold px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full">
+              Schedule
+            </span>
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-black text-gray-900">5</span>
@@ -226,7 +293,7 @@ export default function DashboardPage() {
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 bg-white border border-gray-200/80 rounded-2xl p-4 shadow-enterprise">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input 
+          <input
             ref={searchInputRef}
             type="text"
             value={searchQuery}
@@ -262,7 +329,6 @@ export default function DashboardPage() {
 
       {/* TABLE & AI INSIGHTS SPLIT-SECTION */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        
         {/* LINKS: DIE DEALS TABELLE */}
         <div className="bg-white border border-gray-200/80 rounded-2xl shadow-enterprise overflow-hidden lg:col-span-8">
           <div className="overflow-x-auto">
@@ -278,67 +344,93 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 text-sm">
-                {filteredDeals.length > 0 ? (
+                {loadingDeals ? (
+                  <tr>
+                    <td colSpan={6} className="py-12 text-center text-gray-400">
+                      <div className="flex items-center justify-center gap-2">
+                        <span className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                        Lade Deals...
+                      </div>
+                    </td>
+                  </tr>
+                ) : filteredDeals.length > 0 ? (
                   filteredDeals.map((deal) => {
-                    const strokeColor = deal.score >= 80 ? "stroke-indigo-500" : deal.score >= 60 ? "stroke-amber-500" : "stroke-rose-500";
+                    const strokeColor =
+                      deal.score >= 80
+                        ? "stroke-indigo-500"
+                        : deal.score >= 60
+                          ? "stroke-amber-500"
+                          : "stroke-rose-500";
 
                     return (
-                      <tr 
+                      <tr
                         key={deal.id}
                         className="hover:bg-indigo-50/30 transition-colors group cursor-pointer"
                         onClick={() => {
-  // 1. Speichere die kompletten Deal-Daten direkt im SessionStorage, damit die Detailseite sie sicher hat
-  sessionStorage.setItem(`deal_${deal.id}`, JSON.stringify({
-    id: deal.id,
-    title: deal.title || "Lakefront Villa Munich",
-    status: deal.status || "Reviewing",
-    date: deal.date || new Date().toLocaleDateString("de-DE"),
-    client: deal.client || "Max Mustermann",
-    email: deal.email || "max@immobilien-muenchen.de",
-    score: deal.score || 85,
-    files: deal.files || ["expose_lakefront_villa.pdf", "grundbuchauszug.pdf"],
-    analysis: deal.analysis || {
-      executiveSummary: "Hochwertiges Anlageobjekt in exzellenter Seelage mit starkem Wertsteigerungspotenzial.",
-      topRisks: [{ title: "Ungeklärte Sanierungshistorie", whyItMatters: "Belege fehlen.", sourceDoc: "expose.pdf", page: 12 }],
-      negotiationPoints: [],
-      missingDocuments: []
-    }
-  }));
+                          // 1. Speichere die kompletten Deal-Daten direkt im SessionStorage
+                          sessionStorage.setItem(
+                            `deal_${deal.id}`,
+                            JSON.stringify({
+                              id: deal.id,
+                              title: deal.title || "Deal Details",
+                              status: deal.status || "Reviewing",
+                              date:
+                                deal.date ||
+                                new Date().toLocaleDateString("de-DE"),
+                              client: deal.client || "Mandant",
+                              email: deal.email || "kontakt@dealpilot.ai",
+                              score: deal.score || 85,
+                              files: deal.files || [],
+                              analysis: deal.analysis || {
+                                executiveSummary:
+                                  "Analysiertes Immobilien-Investment mit starkem Potenzial.",
+                                topRisks: [],
+                                negotiationPoints: [],
+                                missingDocuments: [],
+                              },
+                            }),
+                          );
 
-  // 2. Navigiere zur Detailseite
-  router.push(`/dashboard/deals/${deal.id}`);
-}}
+                          // 2. Navigiere zur Detailseite
+                          router.push(`/dashboard/deals/${deal.id}`);
+                        }}
                       >
                         {/* Column 1: Deal Name & Price */}
                         <td className="py-4 px-6">
                           <div className="flex items-center gap-3.5">
                             <div className="relative w-10 h-10 flex items-center justify-center shrink-0">
                               <svg className="absolute w-full h-full transform -rotate-90">
-                                <circle 
-                                  cx="20" 
-                                  cy="20" 
-                                  r="16" 
-                                  className="stroke-gray-100 fill-none" 
-                                  strokeWidth="2.5" 
+                                <circle
+                                  cx="20"
+                                  cy="20"
+                                  r="16"
+                                  className="stroke-gray-100 fill-none"
+                                  strokeWidth="2.5"
                                 />
-                                <circle 
-                                  cx="20" 
-                                  cy="20" 
-                                  r="16" 
+                                <circle
+                                  cx="20"
+                                  cy="20"
+                                  r="16"
                                   className={`fill-none transition-all duration-1000 ${strokeColor}`}
-                                  strokeWidth="2.5" 
+                                  strokeWidth="2.5"
                                   strokeDasharray={100.5}
-                                  strokeDashoffset={100.5 - (100.5 * deal.score) / 100}
+                                  strokeDashoffset={
+                                    100.5 - (100.5 * deal.score) / 100
+                                  }
                                   strokeLinecap="round"
                                 />
                               </svg>
-                              <span className="text-[10px] font-black text-gray-700">{deal.score}</span>
+                              <span className="text-[10px] font-black text-gray-700">
+                                {deal.score}
+                              </span>
                             </div>
                             <div>
                               <div className="font-bold text-gray-900 text-sm group-hover:text-indigo-600 transition-colors">
                                 {deal.title}
                               </div>
-                              <div className="text-xs text-gray-400 font-semibold mt-0.5">{deal.price}</div>
+                              <div className="text-xs text-gray-400 font-semibold mt-0.5">
+                                {deal.price}
+                              </div>
                             </div>
                           </div>
                         </td>
@@ -349,8 +441,12 @@ export default function DashboardPage() {
                               <User className="w-3.5 h-3.5" />
                             </div>
                             <div>
-                              <div className="font-semibold text-gray-700 text-xs">{deal.client}</div>
-                              <div className="text-[11px] text-gray-400">{deal.email}</div>
+                              <div className="font-semibold text-gray-700 text-xs">
+                                {deal.client}
+                              </div>
+                              <div className="text-[11px] text-gray-400">
+                                {deal.email}
+                              </div>
                             </div>
                           </div>
                         </td>
@@ -358,18 +454,22 @@ export default function DashboardPage() {
                         <td className="py-4 px-6 text-center">
                           <div className="inline-flex items-center gap-1 bg-indigo-50/80 px-2.5 py-1 rounded-full border border-indigo-100/80">
                             <Sparkles className="w-3 h-3 text-indigo-500" />
-                            <span className="text-xs font-black text-indigo-700">{deal.score}</span>
+                            <span className="text-xs font-black text-indigo-700">
+                              {deal.score}
+                            </span>
                           </div>
                         </td>
 
                         <td className="py-4 px-6">
-                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ${
-                            deal.status === "Reviewing" 
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-100" 
-                              : deal.status === "Missing Docs"
-                              ? "bg-rose-50 text-rose-700 border-rose-100"
-                              : "bg-amber-50 text-amber-700 border-amber-100"
-                          }`}>
+                          <span
+                            className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ${
+                              deal.status === "Reviewing"
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                                : deal.status === "Missing Docs"
+                                  ? "bg-rose-50 text-rose-700 border-rose-100"
+                                  : "bg-amber-50 text-amber-700 border-amber-100"
+                            }`}
+                          >
                             {deal.status}
                           </span>
                         </td>
@@ -387,7 +487,7 @@ export default function DashboardPage() {
                           </button>
                         </td>
                       </tr>
-                    )
+                    );
                   })
                 ) : (
                   <tr>
@@ -404,7 +504,7 @@ export default function DashboardPage() {
         {/* RECHTS: DEALPILOT AI INSIGHTS CARD */}
         <div className="bg-slate-950 border border-slate-800/80 rounded-3xl p-6 shadow-2xl text-white lg:col-span-4 relative overflow-hidden">
           <div className="absolute top-0 right-0 w-40 h-40 bg-indigo-600/15 rounded-full blur-3xl pointer-events-none" />
-          
+
           <div className="flex justify-between items-center pb-4 border-b border-slate-800/80">
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-indigo-400 fill-indigo-400/20" />
@@ -420,7 +520,8 @@ export default function DashboardPage() {
 
           <div className="mt-5 space-y-4">
             <p className="text-xs text-slate-400 leading-relaxed font-medium">
-              AI has analyzed your active deals. Action is required for a high-value lead.
+              AI has analyzed your active deals. Action is required for a
+              high-value lead.
             </p>
 
             {/* Inner Alert Box: Urgent Action */}
@@ -429,9 +530,16 @@ export default function DashboardPage() {
                 <span>Urgent Action</span>
                 <span className="text-slate-400">Lakefront Villa</span>
               </div>
-              <h3 className="text-xs font-bold text-white">Request Missing Documents</h3>
+              <h3 className="text-xs font-bold text-white">
+                Request Missing Documents
+              </h3>
               <p className="text-[11px] text-slate-400 leading-normal">
-                Without the missing documents, the closing probability will drop by <span className="text-rose-400 font-bold">12% in the next 48h</span>.
+                Without the missing documents, the closing probability will drop
+                by{" "}
+                <span className="text-rose-400 font-bold">
+                  12% in the next 48h
+                </span>
+                .
               </p>
             </div>
 
@@ -441,16 +549,17 @@ export default function DashboardPage() {
                 <span>Hot Opportunity</span>
                 <span className="text-slate-400">Penthouse HH</span>
               </div>
-              <h3 className="text-xs font-bold text-white">Clients financial status</h3>
+              <h3 className="text-xs font-bold text-white">
+                Clients financial status
+              </h3>
               <p className="text-[11px] text-slate-400 leading-normal">
-                High engagement score detected. Customer opened the document link 4 times today.
+                High engagement score detected. Customer opened the document
+                link 4 times today.
               </p>
             </div>
           </div>
         </div>
-
       </div>
-
     </div>
-  )
+  );
 }

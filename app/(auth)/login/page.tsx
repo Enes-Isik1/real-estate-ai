@@ -29,6 +29,9 @@ function LoginForm() {
     setLoading(true);
     setErrorMsg("");
 
+    // 1. Vorherige Sessions hart bereinigen, um Datenmischung zu verhindern
+    await supabase.auth.signOut();
+
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -38,8 +41,10 @@ function LoginForm() {
       setErrorMsg("Anmeldung fehlgeschlagen: " + error.message);
       setLoading(false);
     } else {
-      router.push(redirectTo);
-      router.refresh();
+      // 2. ENTERPRISE FIX: Nutze window.location.href statt router.push + router.refresh.
+      // Das erzwingt einen harten Reload des Browsers und verhindert, dass Next.js
+      // alte gecachte Daten des vorherigen Users anzeigt!
+      window.location.href = redirectTo;
     }
   };
 
@@ -141,10 +146,10 @@ function LoginForm() {
   );
 }
 
-// Hauptseite mit Suspense-Boundary (Lösung für den Build-Fehler)
+// Hauptseite mit Suspense-Boundary (ohne das alte bg-slate-950, da das Layout das übernimmt)
 export default function LoginPage() {
   return (
-    <div className="min-h-screen w-full grid grid-cols-1 lg:grid-cols-12 bg-slate-950 font-sans text-slate-100 overflow-hidden">
+    <div className="min-h-screen w-full grid grid-cols-1 lg:grid-cols-12 font-sans overflow-hidden">
       {/* LINKE SEITE: Brand Showcase */}
       <div className="hidden lg:flex lg:col-span-7 relative bg-gradient-to-br from-indigo-950 via-slate-900 to-slate-950 p-12 flex-col justify-between border-r border-slate-800/60">
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none" />

@@ -70,7 +70,7 @@ export default function SideBar() {
   ];
 
   return (
-    <aside className="w-64 border-r border-gray-200/60 bg-white h-screen flex flex-col p-4 shrink-0 justify-between">
+    <aside className="w-64 border-r border-zinc-300 bg-zinc-200/70 h-screen flex flex-col p-4 shrink-0 justify-between">
       {/* LOGO & NAVIGATION */}
       <div className="space-y-6 flex flex-col overflow-y-auto pr-1">
         {/* LOGO */}

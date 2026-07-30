@@ -24,14 +24,23 @@ interface Deal {
 }
 
 export default async function DealsPage() {
-  // 1. Supabase Server Client initialisieren (respektiert RLS automatisch auf dem Server)
+  // 1. Supabase Server Client initialisieren
   const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  // 2. Daten serverseitig abrufen
-  const { data: deals, error } = await supabase
+  // 2. Daten serverseitig abrufen (strikt gefiltert auf den eingeloggten User)
+  let dealsQuery = supabase
     .from("deals")
     .select("*")
     .order("created_at", { ascending: false });
+
+  if (user) {
+    dealsQuery = dealsQuery.eq("user_id", user.id);
+  }
+
+  const { data: deals, error } = await dealsQuery;
 
   if (error) {
     console.error("Enterprise Audit Error [Deals Fetch]:", error.message);

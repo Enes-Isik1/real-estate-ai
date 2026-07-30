@@ -2,12 +2,16 @@
 
 import React from "react";
 import {
-  Sparkles, FileWarning, ArrowLeft, Loader2, UploadCloud
+  Sparkles,
+  FileWarning,
+  ArrowLeft,
+  Loader2,
+  UploadCloud,
 } from "lucide-react";
 
 import AuditCard from "./AuditCard";
 import EvidenceTimeline from "./EvidenceTimeline";
-import PDFUploader from "../../../components/ui/PDFUploader";
+import PDFUploader from "../../../../components/ui/PDFUploader";
 import DecisionCenter from "./DecisionCenter";
 import { ExecutiveSummary } from "@/components/analysis/ExecutiveSummary";
 import { RiskAssessment } from "@/components/analysis/RiskAssessment";
@@ -48,12 +52,16 @@ function AnalyzeContent() {
           <div className="inline-flex items-center justify-center w-12 h-12 bg-indigo-50 border border-indigo-100 rounded-2xl text-indigo-600 mb-2 shadow-sm">
             <UploadCloud className="w-6 h-6" />
           </div>
-          <h1 className="text-3xl font-black text-gray-900 tracking-tight">Analyze Your Deal</h1>
-          <p className="text-gray-500 text-sm font-medium">Upload Real Estate PDFs to start the deep AI analysis.</p>
+          <h1 className="text-3xl font-black text-gray-900 tracking-tight">
+            Analyze Your Deal
+          </h1>
+          <p className="text-gray-500 text-sm font-medium">
+            Upload Real Estate PDFs to start the deep AI analysis.
+          </p>
         </div>
-        
+
         <div className="w-full bg-white p-6 md:p-8 border border-gray-200/80 rounded-3xl shadow-enterprise space-y-6">
-          <PDFUploader 
+          <PDFUploader
             selectedFiles={selectedFiles}
             onFilesSelected={setSelectedFiles}
           />
@@ -64,7 +72,8 @@ function AnalyzeContent() {
               className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold text-sm rounded-2xl transition-all shadow-[0_10px_25px_-5px_rgba(79,70,229,0.4)] flex items-center justify-center gap-2 cursor-pointer active:scale-95"
             >
               <Sparkles className="w-4 h-4" />
-              Analyse starten ({selectedFiles.length} {selectedFiles.length === 1 ? 'Datei' : 'Dateien'})
+              Analyse starten ({selectedFiles.length}{" "}
+              {selectedFiles.length === 1 ? "Datei" : "Dateien"})
             </button>
           )}
         </div>
@@ -79,10 +88,12 @@ function AnalyzeContent() {
         <div className="w-16 h-16 bg-rose-50 border border-rose-100 rounded-3xl flex items-center justify-center text-rose-500 shadow-sm">
           <FileWarning className="w-8 h-8" />
         </div>
-        <h2 className="text-2xl font-black text-gray-900">Analyse fehlgeschlagen</h2>
+        <h2 className="text-2xl font-black text-gray-900">
+          Analyse fehlgeschlagen
+        </h2>
         <p className="text-gray-500 text-sm font-medium">{error}</p>
-        <button 
-          onClick={resetAnalysis} 
+        <button
+          onClick={resetAnalysis}
           className="mt-2 px-6 py-3 bg-gray-900 hover:bg-gray-800 text-white text-sm font-semibold rounded-2xl shadow-sm transition-all cursor-pointer"
         >
           Zurück zum Upload
@@ -100,8 +111,12 @@ function AnalyzeContent() {
           <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
         </div>
         <div className="text-center space-y-1">
-          <p className="font-bold text-lg text-gray-900">{loadingSteps[loadingStep].text}</p>
-          <p className="text-xs text-gray-400 font-medium">Please wait while DealPilot processes your documents.</p>
+          <p className="font-bold text-lg text-gray-900">
+            {loadingSteps[loadingStep].text}
+          </p>
+          <p className="text-xs text-gray-400 font-medium">
+            Please wait while DealPilot processes your documents.
+          </p>
         </div>
       </div>
     );
@@ -110,8 +125,8 @@ function AnalyzeContent() {
   // 4. Haupt-Analyse Dashboard (Vollständig mit allen Komponenten!)
   return (
     <div className="space-y-8 max-w-[1500px] mx-auto pb-24 animate-fade-in">
-      <button 
-        onClick={resetAnalysis} 
+      <button
+        onClick={resetAnalysis}
         className="inline-flex items-center gap-2 text-xs font-semibold text-gray-500 hover:text-indigo-600 transition-colors cursor-pointer bg-white border border-gray-200/80 px-4 py-2 rounded-xl shadow-sm"
       >
         <ArrowLeft className="w-3.5 h-3.5" /> Upload another document
@@ -124,17 +139,20 @@ function AnalyzeContent() {
           <ExecutiveSummary
             summary={{
               title: "Executive Summary",
-              content: analysis?.executiveSummary || ""
+              content: analysis?.executiveSummary || "",
             }}
           />
           <ConflictAlert conflicts={analysis?.crossDocumentConflicts || []} />
-          
-          <RiskAssessment risks={risks} onScrollToSource={handleScrollToSource} />
+
+          <RiskAssessment
+            risks={risks}
+            onScrollToSource={handleScrollToSource}
+          />
           <PositiveAspects aspects={positiveFindingsStrings} />
           <Recommendations recs={recommendationStrings} />
           <SellerQuestions questions={sellerQuestions} />
           <NegotiationPoints points={analysis?.negotiationPoints || []} />
-          
+
           <div id="evidence-timeline-section">
             <EvidenceTimeline data={analysis?.timeline} />
           </div>
@@ -149,7 +167,10 @@ function AnalyzeContent() {
             </h3>
             <div className="grid grid-cols-2 gap-2.5">
               {missingDocuments.map((d: any, i: number) => (
-                <div key={i} className="p-2.5 bg-rose-50/80 border border-rose-100 rounded-2xl text-xs font-bold text-rose-700">
+                <div
+                  key={i}
+                  className="p-2.5 bg-rose-50/80 border border-rose-100 rounded-2xl text-xs font-bold text-rose-700"
+                >
                   {d.name}
                 </div>
               ))}
