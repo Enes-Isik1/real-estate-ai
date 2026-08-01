@@ -138,10 +138,12 @@ export function AnalysisProvider({ children }: { children: React.ReactNode }) {
       setUploadedData(data);
       setIsLoading(false);
 
-      // Weiterleitung zur echten Deal-ID aus der Datenbank
+      // Weiterleitung mit Verzögerung, damit Supabase den Deal speichern kann
       const dealId = data.property?.id || data.id;
       if (dealId) {
-        router.push(`/dashboard/dashboard/decision-center`);
+        setTimeout(() => {
+          router.push("/dashboard/dashboard/decision-center");
+        }, 1500);
       }
     } catch (err: any) {
       if (err.message === "Failed to fetch") {
