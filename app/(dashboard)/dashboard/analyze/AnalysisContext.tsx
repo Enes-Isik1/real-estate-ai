@@ -141,7 +141,7 @@ export function AnalysisProvider({ children }: { children: React.ReactNode }) {
       // Weiterleitung zur echten Deal-ID aus der Datenbank
       const dealId = data.property?.id || data.id;
       if (dealId) {
-        router.push(`/dashboard/decision-center`);
+        router.push(`/dashboard/dashboard/decision-center`);
       }
     } catch (err: any) {
       if (err.message === "Failed to fetch") {
