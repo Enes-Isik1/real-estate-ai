@@ -142,7 +142,7 @@ export function AnalysisProvider({ children }: { children: React.ReactNode }) {
       const dealId = data.property?.id || data.id;
       if (dealId) {
         setTimeout(() => {
-          router.push("/dashboard/dashboard/decision-center");
+          router.push("/dashboard/decision-center");
         }, 1500);
       }
     } catch (err: any) {
