@@ -146,7 +146,7 @@ function LoginForm() {
   );
 }
 
-// Hauptseite mit Suspense-Boundary (ohne das alte bg-slate-950, da das Layout das übernimmt)
+// Hauptseite mit Suspense-Boundary
 export default function LoginPage() {
   return (
     <div className="min-h-screen w-full grid grid-cols-1 lg:grid-cols-12 font-sans overflow-hidden">
