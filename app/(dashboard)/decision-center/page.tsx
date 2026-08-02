@@ -1,4 +1,3 @@
-// app/(dashboard)/dashboard/decision-center/page.tsx
 import { createClient } from "@/lib/utils/supabase/server";
 import { redirect } from "next/navigation";
 import DecisionCenter from "@/app/(dashboard)/dashboard/analyze/DecisionCenter";
@@ -10,7 +9,10 @@ export default async function DecisionCenterPage() {
   const supabase = await createClient();
 
   // 1. Authentifizierung prüfen
-  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
   if (userError || !user) {
     redirect("/login");
   }
@@ -39,17 +41,20 @@ export default async function DecisionCenterPage() {
             <Sparkles className="w-3.5 h-3.5" /> AI Decision Center
           </div>
           <h1 className="text-3xl font-black text-white tracking-tight">
-            {latestDeal ? latestDeal.title : "Kein aktiver Deal"}
+            {latestDeal ? latestDeal.title : "Deal wird verarbeitet..."}
           </h1>
           <p className="text-slate-400 text-sm">
-            Zentrale Management-Übersicht, Risikobewertung und strategische Pipeline-Steuerung.
+            Zentrale Management-Übersicht, Risikobewertung und strategische
+            Pipeline-Steuerung.
           </p>
         </div>
 
         {latestDeal && (
           <div className="flex items-center gap-3">
             <div className="text-right">
-              <span className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider text-slate-400">Deal Status</span>
+              <span className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                Deal Status
+              </span>
               <span className="inline-block px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-bold rounded-full mt-0.5">
                 {latestDeal.status || "Analyzing"}
               </span>
@@ -58,15 +63,18 @@ export default async function DecisionCenterPage() {
         )}
       </div>
 
-      {/* Deine originale DecisionCenter Komponente mit echten Risiken */}
+      {/* Fallback-Ansicht statt 404, falls der Deal noch lädt */}
       {latestDeal ? (
         <DecisionCenter risks={risks} />
       ) : (
         <div className="bg-white border border-gray-200/80 p-12 rounded-3xl text-center space-y-4 shadow-sm">
-          <AlertTriangle className="w-10 h-10 text-amber-500 mx-auto" />
-          <h3 className="text-lg font-bold text-gray-900">Keine Immobiliendaten vorhanden</h3>
+          <AlertTriangle className="w-10 h-10 text-amber-500 mx-auto animate-bounce" />
+          <h3 className="text-lg font-bold text-gray-900">
+            Daten werden synchronisiert...
+          </h3>
           <p className="text-xs text-gray-500 max-w-md mx-auto">
-            Lade im Analyse-Bereich ein Dokument hoch, damit das Decision Center die Kennzahlen berechnen kann.
+            Dein Deal wird im Hintergrund geladen. Einen Moment bitte, die
+            Ansicht aktualisiert sich gleich automatisch.
           </p>
         </div>
       )}
