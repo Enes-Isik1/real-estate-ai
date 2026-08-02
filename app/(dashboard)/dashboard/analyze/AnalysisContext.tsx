@@ -137,14 +137,6 @@ export function AnalysisProvider({ children }: { children: React.ReactNode }) {
       setChunks(data.chunks || []);
       setUploadedData(data);
       setIsLoading(false);
-
-      // Weiterleitung mit Verzögerung, damit Supabase den Deal speichern kann
-      const dealId = data.property?.id || data.id;
-      if (dealId) {
-        setTimeout(() => {
-          router.push("/dashboard/decision-center");
-        }, 1500);
-      }
     } catch (err: any) {
       if (err.message === "Failed to fetch") {
         setError(
