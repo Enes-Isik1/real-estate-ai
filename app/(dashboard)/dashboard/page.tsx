@@ -13,6 +13,7 @@ import {
   Sliders,
   Globe,
 } from "lucide-react";
+import { OnboardingGuide } from "@/components/OnboardingGuide";
 
 // TypeScript Interface für einen Deal
 interface Deal {
@@ -104,6 +105,7 @@ const INITIAL_DEALS: Deal[] = [
 export default function DashboardPage() {
   const router = useRouter();
 
+  const [showOnboarding, setShowOnboarding] = useState(true);
   const [deals, setDeals] = useState<Deal[]>(INITIAL_DEALS);
   const [loadingDeals, setLoadingDeals] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -224,6 +226,10 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-8 animate-fade-in">
+      {/* Das Onboarding wird nur gerendert, wenn showOnboarding true ist */}
+      {showOnboarding && (
+        <OnboardingGuide onComplete={() => setShowOnboarding(false)} />
+      )}
       {/* KPI CARDS SECTION */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         {/* Card 1 */}
