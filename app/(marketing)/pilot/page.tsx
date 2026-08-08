@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import { PilotNav } from "@/app/components/Pilotnav";
-import { Hero } from "@/app/components/Hero";
-import { Definition } from "@/app/components/Definition";
-import { Audience } from "@/app/components/Audience";
-import { ProblemSolution } from "@/app/components/Problems";
-import { ShowcaseTabs } from "@/app/components/Showcase";
-import { PilotApplication } from "@/app/components/Pilotapplication";
-import { PilotFooter } from "@/app/components/Pilotfooter";
+import { PilotNav } from "@/app/(marketing)/components/landing/Pilotnav";
+import { Hero } from "@/app/(marketing)/components/landing/Hero";
+import { Definition } from "@/app/(marketing)/components/landing/Definition";
+import { Audience } from "@/app/(marketing)/components/landing/Audience";
+import { ProblemSolution } from "@/app/(marketing)/components/landing/Problems";
+import { ShowcaseTabs } from "@/app/(marketing)/components/landing/Showcase";
+import { PilotApplication } from "@/app/(marketing)/components/landing/Pilotapplication";
+import { PilotFooter } from "@/app/(marketing)/components/landing/Pilotfooter";
 
 export const metadata: Metadata = {
   title: "DealPilot — Pilotprogramm für Immobilienmakler",
