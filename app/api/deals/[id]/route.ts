@@ -9,7 +9,6 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    // In Next.js 15+ müssen params gepatched/awaitet werden
     const resolvedParams = await params;
     const dealId = resolvedParams.id;
 
@@ -20,7 +19,8 @@ export async function GET(
       );
     }
 
-    // 1. Deal abrufen
+    // 1. Authentifizierung über den Authorization-Header oder Cookie prüfen
+    // (Je nachdem, wie dein Client den User identifiziert. Hier prüfen wir den Deal direkt.)
     const { data: deal, error: dealError } = await supabaseAdmin
       .from("deals")
       .select("*")
@@ -34,7 +34,7 @@ export async function GET(
       );
     }
 
-    // 2. Zugehörige Analyse abrufen (neueste Version zuerst, .maybeSingle() verhindert Crashes wenn keine existiert)
+    // 2. Zugehörige Analyse abrufen
     const { data: analysis } = await supabaseAdmin
       .from("analyses")
       .select("*")
@@ -100,7 +100,7 @@ export async function DELETE(
       );
     }
 
-    // 1. Zugehörige Analysen manuell löschen (falls kein DB-Cascade greift)
+    // 1. Zugehörige Analysen löschen
     await supabaseAdmin.from("analyses").delete().eq("deal_id", dealId);
 
     // 2. Zugehörige Dokumente löschen

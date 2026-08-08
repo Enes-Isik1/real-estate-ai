@@ -7,15 +7,6 @@ const nextConfig = {
   // Verbessert die Performance, indem die extrem schnelle, Rust-basierte SWC-Minimierung erzwungen wird
   swcMinify: true,
 
-  // Verhindert, dass fehlerhafter TypeScript-Code oder ESLint-Fehler den Production-Build blockieren.
-  // (Empfohlen, um beim Deployen nicht wegen Kleinigkeiten hängenzubleiben; Fehler siehst du im Editor)
-  typescript: {
-    ignoreBuildErrors: true, // Auf "true" setzen, falls der Build auf Vercel o.ä. trotz kleinerer Typ-Fehler durchgehen soll
-  },
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
-
   // Professionelle HTTP-Header für Sicherheit und SEO
   async headers() {
     return [

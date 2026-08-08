@@ -15,26 +15,68 @@ const ChatResponseSchema = z.object({
 
 export async function POST(req: Request) {
   try {
+    // 1. Authentifizierung über Authorization-Header prüfen (IDOR-Schutz)
+    const authHeader = req.headers.get("authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return Response.json(
+        { error: "Nicht autorisiert. Kein Token übergeben." },
+        { status: 401 },
+      );
+    }
+
+    const token = authHeader.replace("Bearer ", "");
+    const {
+      data: { user },
+      error: authError,
+    } = await supabaseAdmin.auth.getUser(token);
+
+    if (authError || !user) {
+      return Response.json(
+        { error: "Ungültiges oder abgelaufenes Token." },
+        { status: 401 },
+      );
+    }
+
     const { question, dealId, relevantChunks } = await req.json();
 
     let context = "";
 
-    // 1. Wenn eine dealId übergeben wurde, holen wir die Analyse und Dokumente direkt aus Supabase
+    // 2. Wenn eine dealId übergeben wurde, erst Berechtigung prüfen, dann Daten laden
     if (dealId) {
-      const { data: analysis, error: analysisError } = await supabaseAdmin
-        .from('analyses')
-        .select('*')
-        .eq('deal_id', dealId)
+      // Sicherheitscheck: Geht der Deal wirklich an diesen User?
+      const { data: deal, error: dealError } = await supabaseAdmin
+        .from("deals")
+        .select("id, user_id")
+        .eq("id", dealId)
+        .eq("user_id", user.id) // <--- Verhindert das Auslesen fremder Deal-Chats
         .single();
 
+      if (dealError || !deal) {
+        return Response.json(
+          { error: "Deal nicht gefunden oder keine Berechtigung." },
+          { status: 403 },
+        );
+      }
+
+      // Jetzt ist der Zugriff sicher: Analyse abrufen
+      const { data: analysis, error: analysisError } = await supabaseAdmin
+        .from("analyses")
+        .select("*")
+        .eq("deal_id", dealId)
+        .order("version", { ascending: false })
+        .maybeSingle();
+
       if (analysisError || !analysis) {
-        return Response.json({ error: "Keine gespeicherte Analyse für diesen Deal gefunden." }, { status: 404 });
+        return Response.json(
+          { error: "Keine gespeicherte Analyse für diesen Deal gefunden." },
+          { status: 404 },
+        );
       }
 
       const { data: documents } = await supabaseAdmin
-        .from('documents')
-        .select('*')
-        .eq('deal_id', dealId);
+        .from("documents")
+        .select("*")
+        .eq("deal_id", dealId);
 
       context = `
         EXECUTIVE SUMMARY:
@@ -49,14 +91,19 @@ export async function POST(req: Request) {
         VORHANDENE DOKUMENTE:
         ${JSON.stringify(documents)}
       `;
-    } 
-    // 2. Fallback auf direkt übergebene Chunks (wie bisher)
+    }
+    // 3. Fallback auf direkt übergebene Chunks
     else if (relevantChunks && Array.isArray(relevantChunks)) {
       context = relevantChunks
-        .map((c: { page: number; text: string }) => `[Seite ${c.page}]: ${c.text}`)
+        .map(
+          (c: { page: number; text: string }) => `[Seite ${c.page}]: ${c.text}`,
+        )
         .join("\n\n");
     } else {
-      return Response.json({ error: "Weder dealId noch relevantChunks übergeben." }, { status: 400 });
+      return Response.json(
+        { error: "Weder dealId noch relevantChunks übergeben." },
+        { status: 400 },
+      );
     }
 
     const { object } = await generateObject({
