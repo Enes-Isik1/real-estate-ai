@@ -11,6 +11,7 @@ import {
   Settings,
   FolderKanban,
   LogOut,
+  MessageSquareText,
 } from "lucide-react";
 
 const INITIAL_DEALS = [
@@ -115,8 +116,27 @@ export default function SideBar() {
         </nav>
       </div>
 
-      {/* UNTERER BEREICH: LOGOUT & ENGINE STATUS */}
+      {/* UNTERER BEREICH: FEEDBACK, LOGOUT & ENGINE STATUS */}
       <div className="mt-auto pt-6 border-t border-gray-200/50 shrink-0 space-y-3">
+        {/* FEEDBACK BUTTON */}
+        <Link
+          href="/dashboard/feedback"
+          className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-150 group ${
+            pathname === "/dashboard/feedback"
+              ? "bg-indigo-50 text-indigo-600"
+              : "text-gray-500 hover:bg-slate-50 hover:text-gray-900"
+          }`}
+        >
+          <MessageSquareText
+            className={`w-4.5 h-4.5 ${
+              pathname === "/dashboard/feedback"
+                ? "text-indigo-600"
+                : "text-gray-400 group-hover:text-gray-900"
+            } transition-colors`}
+          />
+          <span>Feedback & Ideen</span>
+        </Link>
+
         {/* LOGOUT BUTTON */}
         <button
           onClick={handleLogout}
