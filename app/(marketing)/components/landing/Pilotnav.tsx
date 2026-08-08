@@ -1,6 +1,7 @@
 "use client";
 
 import { Sparkles } from "lucide-react";
+import Link from "next/link";
 
 export function PilotNav() {
   return (
@@ -18,12 +19,26 @@ export function PilotNav() {
           </span>
         </div>
 
-        <a
-          href="#bewerbung"
-          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800"
-        >
-          Early Access sichern
-        </a>
+        {/* Button Container mit noch mehr Abstand (gap-8) */}
+        <div className="flex items-center gap-8">
+          {/* Anmelden Button */}
+          <Link
+            href="/login"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm font-medium text-gray-600 transition-colors hover:text-gray-900"
+          >
+            Anmelden
+          </Link>
+
+          {/* Early Access Button */}
+          <a
+            href="#bewerbung"
+            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800"
+          >
+            Early Access sichern
+          </a>
+        </div>
       </div>
     </header>
   );
