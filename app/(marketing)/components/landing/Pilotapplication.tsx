@@ -18,16 +18,24 @@ export function PilotApplication() {
     const payload = Object.fromEntries(formData.entries());
 
     try {
-      // Replace with the real endpoint, e.g. /api/pilot-application
-      await fetch("/api/pilot-application", {
+      const response = await fetch("/api/pilot-application", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-    } catch {
-      // Fail silently for the pilot form; surface a toast in production
-    } finally {
+
+      const data = await response.json();
+
+      // KRITISCH: Nur bei echtem API-Erfolg auf "done" umschalten!
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Fehler beim Speichern der Bewerbung.");
+      }
+
       setState("done");
+    } catch (err: any) {
+      console.error("Bewerbungs-Fehler:", err);
+      alert(err.message || "Es gab einen Fehler. Bitte versuche es erneut.");
+      setState("idle"); // Zurücksetzen, damit der Nutzer es nochmal versuchen kann
     }
   }
 

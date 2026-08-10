@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { createClient } from "@/lib/utils/supabase/client"; // Passe den Pfad zu deinem Supabase-Client an
-import { MessageSquarePlus, ThumbsUp, Send } from "lucide-react";
+import { createClient } from "@/lib/utils/supabase/client";
+import { MessageSquarePlus, Send, ShieldCheck } from "lucide-react";
 
 type FeedbackItem = {
   id: string;
@@ -145,8 +145,13 @@ export default function FeedbackPage() {
               <p className="text-sm text-gray-800 whitespace-pre-wrap">
                 {item.content}
               </p>
-              <div className="mt-4 flex items-center justify-between text-xs text-gray-500">
-                <span>Von: {item.user_email.split("@")[0]}***</span>
+
+              {/* Autor-Anzeige mit Verifiziert-Badge */}
+              <div className="mt-4 flex items-center justify-between text-xs text-gray-500 border-t border-gray-100 pt-3">
+                <span className="inline-flex items-center gap-1.5 font-medium text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md">
+                  <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                  Verifizierter Pilot-Tester
+                </span>
               </div>
             </div>
           ))

@@ -1,6 +1,7 @@
 // app/api/deals/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase-admin";
+import { createClient } from "@/lib/utils/supabase/server"; // Server-Client für Auth-Kontext
+import { supabaseAdmin } from "@/lib/supabase-admin"; // Nur für Admin-Operationen, falls nötig
 
 export const dynamic = "force-dynamic";
 
@@ -19,22 +20,36 @@ export async function GET(
       );
     }
 
-    // 1. Authentifizierung über den Authorization-Header oder Cookie prüfen
-    // (Je nachdem, wie dein Client den User identifiziert. Hier prüfen wir den Deal direkt.)
+    // 1. Authentifizierung: Eingeloggten User über den Server-Client ermitteln
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json(
+        { error: "Nicht autorisiert (Unauthorized)." },
+        { status: 401 },
+      );
+    }
+
+    // 2. IDOR-Schutz: Deal abrufen UND zwingend gegen die user_id des Users prüfen
     const { data: deal, error: dealError } = await supabaseAdmin
       .from("deals")
       .select("*")
       .eq("id", dealId)
+      .eq("user_id", user.id) // <-- Enterprise IDOR-Schutz
       .single();
 
     if (dealError || !deal) {
       return NextResponse.json(
-        { error: "Deal nicht gefunden." },
-        { status: 404 },
+        { error: "Zugriff verweigert oder Deal nicht gefunden." },
+        { status: 403 },
       );
     }
 
-    // 2. Zugehörige Analyse abrufen
+    // 3. Zugehörige Analyse abrufen (da der Deal dem User gehört, sind diese verknüpften Daten sicher)
     const { data: analysis } = await supabaseAdmin
       .from("analyses")
       .select("*")
@@ -42,13 +57,13 @@ export async function GET(
       .order("version", { ascending: false })
       .maybeSingle();
 
-    // 3. Zugehörige Dokumente abrufen
+    // 4. Zugehörige Dokumente abrufen
     const { data: documents } = await supabaseAdmin
       .from("documents")
       .select("*")
       .eq("deal_id", dealId);
 
-    // 4. In unser gewohntes PropertyAsset-Format mappen
+    // 5. In dein gewohntes PropertyAsset-Format mappen
     const aiAnalysis = analysis?.raw_json || {
       leadScore: 50,
       executiveSummary:
@@ -100,17 +115,50 @@ export async function DELETE(
       );
     }
 
-    // 1. Zugehörige Analysen löschen
+    // 1. Authentifizierung: Eingeloggten User ermitteln
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json(
+        { success: false, error: "Nicht autorisiert (Unauthorized)." },
+        { status: 401 },
+      );
+    }
+
+    // 2. IDOR-Schutz: Prüfen, ob der Deal existiert UND dem eingeloggten User gehört
+    const { data: existingDeal, error: fetchError } = await supabaseAdmin
+      .from("deals")
+      .select("id")
+      .eq("id", dealId)
+      .eq("user_id", user.id) // <-- Verhindert das Löschen fremder Deals
+      .single();
+
+    if (fetchError || !existingDeal) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Zugriff verweigert oder Deal nicht gefunden.",
+        },
+        { status: 403 },
+      );
+    }
+
+    // 3. Zugehörige Analysen löschen
     await supabaseAdmin.from("analyses").delete().eq("deal_id", dealId);
 
-    // 2. Zugehörige Dokumente löschen
+    // 4. Zugehörige Dokumente löschen
     await supabaseAdmin.from("documents").delete().eq("deal_id", dealId);
 
-    // 3. Deal selbst löschen
+    // 5. Deal selbst löschen (jetzt absolut sicher mit ID- und User-Prüfung)
     const { error } = await supabaseAdmin
       .from("deals")
       .delete()
-      .eq("id", dealId);
+      .eq("id", dealId)
+      .eq("user_id", user.id);
 
     if (error) {
       return NextResponse.json(
