@@ -141,9 +141,11 @@ export async function POST(request: NextRequest) {
       `⚡ KI-Analyse erfolgreich in ${Date.now() - startTime}ms abgeschlossen.`,
     );
 
+    // Lead Score validieren und runden
     const sanitizedLeadScore = Math.round(Number(coreAnalysis.leadScore) || 50);
     const finalStatus = sanitizedLeadScore > 70 ? "Ready" : "Needs Review";
 
+    // Struktur erweitern, um Konflikte und Next Actions für das Frontend mitzuführen
     const aiAnalysis = {
       leadScore: sanitizedLeadScore,
       executiveSummary:
@@ -153,7 +155,8 @@ export async function POST(request: NextRequest) {
       confidence: 8,
       verificationRequired: false,
       topRisks: coreAnalysis.topRisks || [],
-      crossDocumentConflicts: [],
+      crossDocumentConflicts: coreAnalysis.crossDocumentConflicts || [],
+      nextActions: coreAnalysis.nextActions || [],
       positiveFindings: coreAnalysis.positiveFindings || [],
       missingDocuments: coreAnalysis.missingDocuments || [],
       negotiationPoints: coreAnalysis.negotiationPoints || [],
@@ -217,13 +220,18 @@ export async function POST(request: NextRequest) {
         },
       ]);
 
-      // 4. Zugehörige Dokumente speichern
-      const documentInserts = fileNames.map((fileName) => ({
-        deal_id: dealId,
-        filename: fileName,
-        document_type: "Unbekannt",
-        upload_date: new Date().toISOString(),
-      }));
+      // 4. Zugehörige Dokumente mit automatischer Klassifizierung aus coreAnalysis speichern
+      const documentInserts = fileNames.map((fileName) => {
+        const matchedDoc = coreAnalysis.classifiedDocuments?.find(
+          (d: any) => d.filename === fileName,
+        );
+        return {
+          deal_id: dealId,
+          filename: fileName,
+          document_type: matchedDoc?.detectedType || "Sonstiges",
+          upload_date: new Date().toISOString(),
+        };
+      });
 
       await supabaseAdmin.from("documents").insert(documentInserts);
 
@@ -235,8 +243,8 @@ export async function POST(request: NextRequest) {
 
       const nextVersion = (existingAnalysesCount || 0) + 1;
 
-      // 6. Analyseergebnis speichern
-      const { data: savedAnalysis } = await supabaseAdmin
+      // 6. Analyseergebnis speichern (Inklusive crossDocumentConflicts und nextActions im raw_json)
+      const { data: savedAnalysis, error: analysisError } = await supabaseAdmin
         .from("analyses")
         .insert([
           {
@@ -251,21 +259,33 @@ export async function POST(request: NextRequest) {
         .select()
         .single();
 
-      // 7. Risiken abspeichern
+      if (analysisError) {
+        console.error("🔥 Fehler beim Speichern der Analyse:", analysisError);
+        throw analysisError;
+      }
+
+      // 7. Risiken abspeichern mit validierter Seitenzahl
       if (
         aiAnalysis.topRisks &&
         aiAnalysis.topRisks.length > 0 &&
         savedAnalysis
       ) {
-        const riskInserts = aiAnalysis.topRisks.map((risk: any) => ({
-          analysis_id: savedAnalysis.id,
-          deal_id: dealId,
-          severity: risk.severity || "Medium",
-          title: risk.title,
-          why_it_matters: risk.whyItMatters,
-          confidence: risk.confidence || 90,
-          page_number: risk.source?.pageNumber || risk.page || 1,
-        }));
+        const riskInserts = aiAnalysis.topRisks.map((risk: any) => {
+          // Typ-Prüfung für die Seitenzahl (Zahl erzwingen)
+          const rawPage = risk.source?.pageNumber || risk.page || 1;
+          const parsedPage =
+            typeof rawPage === "number" ? rawPage : parseInt(rawPage);
+
+          return {
+            analysis_id: savedAnalysis.id,
+            deal_id: dealId,
+            severity: risk.severity || "Medium",
+            title: risk.title,
+            why_it_matters: risk.whyItMatters,
+            confidence: risk.confidence || 90,
+            page_number: isNaN(parsedPage) ? 1 : parsedPage,
+          };
+        });
 
         await supabaseAdmin.from("risks").insert(riskInserts);
       }

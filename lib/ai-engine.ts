@@ -1,43 +1,67 @@
-// lib/ai-engine.ts
-import { OpenAI } from 'openai';
+import { OpenAI } from "openai";
 
 const mistral = new OpenAI({
   apiKey: process.env.MISTRAL_API_KEY,
-  baseURL: 'https://api.mistral.ai/v1',
+  baseURL: "https://api.mistral.ai/v1",
 });
 
 /**
- * SCHRITT 1: Turbo-Kernanalyse (Score, Empfehlung, Executive Summary, Risiken + SourceDocs)
+ * ENTERPRISE DEAL INTELLIGENCE 2.0
+ * Führt automatische Klassifizierung, Cross-Document-Analyse, Widerspruchserkennung und Risikopriorisierung durch.
  */
 export async function analyzeCoreData(context: string) {
   const prompt = `
-    Du bist ein erfahrener deutscher Immobilienmakler und Senior Real Estate Analyst. 
-    Analysiere die vorliegenden Dokumente (Exposé, Teilungserklärung, Protokolle etc.) und gib ein striktes JSON-Objekt zurück mit exakt diesen Feldern:
+    Du bist ein kompromissloser deutscher Sachverständiger, WEG-Recht-Experte und Senior Real Estate Analyst. 
+    Analysiere die vorliegenden Dokumente (Exposé, Teilungserklärung, WEG-Protokolle, Wirtschaftsplan, Grundbuch etc.) mit absoluter juristischer und kaufmännischer Präzision.
+
+    Deine Aufgabe ist es, den ultimativen "Deal-Prüfer" durchzuführen. Suche aktiv nach versteckten Risiken, finanziellen Fallen und Widersprüchen.
+
+    Gib ein striktes JSON-Objekt zurück mit exakt diesen Feldern:
     {
-      "leadScore": (Zahl von 0 bis 100),
-      "overallRecommendation": "Kurze, prägnante Handlungsempfehlung für den Makler oder Investor auf Deutsch",
-      "executiveSummary": "Professionelle Zusammenfassung in 2-3 Sätzen auf Deutsch",
+      "classifiedDocuments": [
+        {
+          "filename": "Exakter Dateiname aus dem Kontext",
+          "detectedType": "Exposé" (Wähle aus: "Exposé", "Teilungserklärung", "WEG-Protokoll", "Wirtschaftsplan", "Grundbuchauszug", "Energieausweis", "Grundriss", "Sonstiges")
+        }
+      ],
+      "leadScore": (Zahl von 0 bis 100. 100 = perfekter, fehlerfreier Deal. Bei ungedeckten Sanierungsrückstauten oder massiven Widersprüchen sofort unter 50 fallen lassen!),
+      "overallRecommendation": "Harte, glasklare Handlungsempfehlung für den Makler auf Deutsch (z.B. 'Nicht ohne Nachverhandlung anbieten wegen X')",
+      "executiveSummary": "Kaufmännische Zusammenfassung auf Punkt gebracht (2-3 Sätze)",
       "topRisks": [
         {
           "id": "1",
-          "severity": "High" (oder "Medium" oder "Low"),
-          "title": "Kurzer Titel des Risikos",
-          "whyItMatters": "Warum das für den Kauf relevant ist",
-          "sourceDoc": "Name oder Art des Quelldokuments (z.B. 'Teilungserklärung', 'Protokoll 2023.pdf' oder 'Energieausweis')",
-          "page": 1 (Zahl oder null, falls eine Seitenzahl aus den Dokumenten erkennbar ist)
+          "severity": "High" (oder "Medium" or "Low"),
+          "title": "Prägnanter Risikotitel (z.B. 'Instandhaltungsrücklage unzureichend für beschlossene Dachsanierung')",
+          "whyItMatters": "Konkrete finanzielle oder rechtliche Auswirkung auf den Käufer",
+          "sourceDoc": "Exakter Name des Quelldokuments",
+          "page": 1 (Exakte Seitenzahl als Integer)
+        }
+      ],
+      "crossDocumentConflicts": [
+        {
+          "field": "Streitpunkt (z.B. Wohnfläche, Baujahr, Stellplatz, Instandhaltungsrücklage)",
+          "sourceA": "Aussage in Dokument A mit Quelle (z.B. Exposé: 92 m²)",
+          "sourceB": "Abweichende Aussage in Dokument B mit Quelle (z.B. Grundriss: 87,4 m²)",
+          "recommendation": "Konkrete Handlungsanweisung zur Klärung"
         }
       ],
       "negotiationPoints": [
         {
-          "title": "Verhandlungspunkt",
-          "argument": "Argumentationshilfe für den Makler"
+          "title": "Harter Verhandlungspunkt",
+          "argument": "Konkretes Argument für den Makler zur Kaufpreisreduktion oder Absicherung"
         }
       ],
       "missingDocuments": [
         {
-          "title": "Name des fehlenden Dokuments (z.B. Energieausweis, Wohngeldabrechnung)",
-          "category": "required" (oder "recommended" oder "optional"),
-          "reason": "Warum dieses Dokument benötigt wird"
+          "title": "Name des fehlenden Dokuments",
+          "category": "required" (oder "recommended" or "optional"),
+          "reason": "Rechtliche oder wirtschaftliche Notwendigkeit"
+        }
+      ],
+      "nextActions": [
+        {
+          "action": "Konkreter nächster Schritt für den Makler",
+          "priority": "High" (oder "Medium" or "Low")
         }
       ]
     }
@@ -59,20 +83,27 @@ export async function analyzeCoreData(context: string) {
   } catch (e) {
     console.error("Fehler beim Parsen der KI-Antwort:", raw);
     return {
+      classifiedDocuments: [],
       leadScore: 50,
       overallRecommendation: "Solides Objekt, manuelle Prüfung empfohlen.",
-      executiveSummary: "Die Dokumente konnten nicht vollständig strukturiert eingelesen werden.",
+      executiveSummary:
+        "Die Dokumente konnten nicht vollständig strukturiert eingelesen werden.",
       topRisks: [],
+      crossDocumentConflicts: [],
       negotiationPoints: [],
-      missingDocuments: []
+      missingDocuments: [],
+      nextActions: [],
     };
   }
 }
 
 /**
- * SCHRITT 2: Detaillierte Due Diligence
+ * SCHRITT 2: Detaillierte Due Diligence (Deep Dive)
  */
-export async function analyzeDeepDiveData(context: string, schemaString: string) {
+export async function analyzeDeepDiveData(
+  context: string,
+  schemaString: string,
+) {
   const prompt = `
     Du bist ein Senior Real Estate Analyst. Führe eine vollständige Due Diligence durch.
     Gib AUSSCHLIESSLICH reines JSON zurück gemäß diesem Schema: 

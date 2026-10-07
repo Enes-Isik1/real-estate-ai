@@ -22,6 +22,18 @@ interface RiskItem {
   sourceDoc?: string;
 }
 
+interface ConflictItem {
+  field: string;
+  sourceA: string;
+  sourceB: string;
+  recommendation: string;
+}
+
+interface NextActionItem {
+  action: string;
+  priority: string;
+}
+
 interface MissingDoc {
   title: string;
   category: "required" | "recommended" | "optional";
@@ -42,6 +54,8 @@ interface Deal {
     summary?: string;
     risks?: (string | RiskItem)[];
     topRisks?: RiskItem[];
+    crossDocumentConflicts?: ConflictItem[]; // NEU
+    nextActions?: NextActionItem[]; // NEU
     negotiationPoints?: { title: string; argument: string }[];
     missingDocuments?: MissingDoc[];
   };
@@ -122,6 +136,9 @@ export default function DealDetailPage() {
             analysis: {
               executiveSummary: prop.analysis?.executiveSummary,
               topRisks: prop.analysis?.topRisks || [],
+              crossDocumentConflicts:
+                prop.analysis?.crossDocumentConflicts || [], // NEU
+              nextActions: prop.analysis?.nextActions || [], // NEU
               negotiationPoints: prop.analysis?.negotiationPoints || [],
               missingDocuments: prop.analysis?.missingDocuments || [],
             },
@@ -172,7 +189,6 @@ export default function DealDetailPage() {
     );
   };
 
-  // Funktion zum Löschen des Deals
   // Funktion zum Löschen des Deals
   const handleDeleteDeal = async () => {
     if (!confirm("Möchtest du diesen Deal wirklich unwiderruflich löschen?"))
@@ -394,16 +410,10 @@ export default function DealDetailPage() {
     return (
       <div className="min-h-[70vh] flex flex-col items-center justify-center p-8 space-y-6 animate-fade-in">
         <div className="relative w-16 h-16 flex items-center justify-center">
-          {/* Äußerer pulsierender Ring */}
           <div className="absolute inset-0 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 animate-ping" />
-
-          {/* Innerer rotierender Gradient-Spinner */}
           <div className="absolute inset-0 rounded-2xl border-2 border-transparent border-t-indigo-600 border-r-indigo-500 animate-spin" />
-
-          {/* Zentrales Icon */}
           <Sparkles className="w-6 h-6 text-indigo-600 animate-pulse" />
         </div>
-
         <div className="text-center space-y-1.5">
           <h3 className="font-extrabold text-gray-900 text-sm tracking-wide">
             DealPilot AI Intelligence
@@ -506,7 +516,6 @@ export default function DealDetailPage() {
             <span>Bericht PDF</span>
           </button>
 
-          {/* HIER WURDE DER LÖSCHEN-BUTTON INTEGRIERT */}
           <button
             onClick={handleDeleteDeal}
             title="Deal löschen"
@@ -590,6 +599,76 @@ export default function DealDetailPage() {
           </ul>
         </div>
       </div>
+
+      {/* ========================================================================= */}
+      {/* NEU: WIDERSPRUCHSERKENNUNG (Cross-Document Conflicts)                      */}
+      {/* ========================================================================= */}
+      {deal.analysis?.crossDocumentConflicts &&
+        deal.analysis.crossDocumentConflicts.length > 0 && (
+          <div className="bg-amber-50/60 border border-amber-200/80 rounded-3xl p-6 shadow-sm space-y-4">
+            <h3 className="font-bold text-amber-900 text-lg flex items-center gap-2">
+              <ShieldAlert className="w-5 h-5 text-amber-600" /> Erkannte
+              Widersprüche zwischen Dokumenten
+            </h3>
+            <div className="space-y-3">
+              {deal.analysis.crossDocumentConflicts.map((conflict, i) => (
+                <div
+                  key={i}
+                  className="bg-white border border-amber-200/60 p-4 rounded-2xl space-y-2"
+                >
+                  <span className="px-2.5 py-0.5 bg-amber-100 text-amber-800 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                    Betroffen: {conflict.field}
+                  </span>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                    <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                      <span className="font-bold text-gray-700 block">
+                        Dokument A:
+                      </span>
+                      <span className="text-gray-600">{conflict.sourceA}</span>
+                    </div>
+                    <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                      <span className="font-bold text-gray-700 block">
+                        Dokument B:
+                      </span>
+                      <span className="text-gray-600">{conflict.sourceB}</span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-amber-900 font-medium pt-1">
+                    💡 <strong>Empfehlung:</strong> {conflict.recommendation}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+      {/* ========================================================================= */}
+      {/* NEU: PROAKTIVE NEXT ACTIONS                                               */}
+      {/* ========================================================================= */}
+      {deal.analysis?.nextActions && deal.analysis.nextActions.length > 0 && (
+        <div className="bg-white border border-gray-200/60 rounded-3xl p-6 shadow-sm space-y-4">
+          <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
+            <CheckCircle2 className="w-5 h-5 text-indigo-500" /> Nächste
+            Schritte (Next Actions)
+          </h3>
+          <ul className="space-y-2.5">
+            {deal.analysis.nextActions.map((act, i) => (
+              <li
+                key={i}
+                className="p-3.5 bg-indigo-50/40 border border-indigo-100 rounded-2xl flex items-center justify-between text-xs"
+              >
+                <span className="font-semibold text-gray-800 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-indigo-600"></span>
+                  {act.action}
+                </span>
+                <span className="px-2 py-0.5 bg-white border border-indigo-200 text-indigo-700 rounded-lg text-[10px] font-bold uppercase">
+                  {act.priority}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Fehlende Dokumente & Unterlagen */}
       <div className="bg-white border border-gray-200/60 rounded-3xl p-6 shadow-sm space-y-4">
