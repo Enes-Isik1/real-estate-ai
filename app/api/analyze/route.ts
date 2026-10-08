@@ -244,20 +244,31 @@ export async function POST(request: NextRequest) {
       timeline: coreAnalysis.timeline || [],
     };
 
-    let dealId = existingDealId;
+    let dealId = existingDealId || null;
     let finalDealTitle = formTitle || "Neue Immobilie";
 
     if (dealId) {
       console.log(`🔄 Aktualisiere bestehenden Deal ID: ${dealId}`);
-      const { data: existingDeal } = await supabaseAdmin
+      const { data: existingDeal, error: fetchError } = await supabaseAdmin
         .from("deals")
         .select("title")
         .eq("id", dealId)
         .single();
 
-      if (existingDeal) {
-        finalDealTitle = existingDeal.title;
+      if (fetchError || !existingDeal) {
+        return NextResponse.json(
+          { error: "Der angegebene Deal wurde nicht gefunden." },
+          { status: 404 },
+        );
       }
+
+      finalDealTitle = existingDeal.title;
+
+      // Status während der neuen Analyse auf "Analyzing" setzen
+      await supabaseAdmin
+        .from("deals")
+        .update({ status: "Analyzing" })
+        .eq("id", dealId);
     } else {
       const fallbackTitle = fileNames[0]
         ? fileNames[0].replace(/\.[^/.]+$/, "")

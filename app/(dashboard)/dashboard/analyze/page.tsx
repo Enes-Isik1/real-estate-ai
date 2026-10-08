@@ -8,6 +8,7 @@ import {
   Loader2,
   UploadCloud,
 } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 
 import AuditCard from "./AuditCard";
 import EvidenceTimeline from "./EvidenceTimeline";
@@ -22,6 +23,17 @@ import { NegotiationPoints } from "@/components/analysis/NegotiationPoints";
 import ChatInterface from "@/app/api/analyze/chat/ChatInterface";
 import { ConflictAlert } from "@/components/analysis/ConflictAlert";
 import { AnalysisProvider, useAnalysis } from "./AnalysisContext";
+
+export default function AnalyzePage() {
+  const searchParams = useSearchParams();
+  const existingDealId = searchParams.get("dealId") || undefined;
+
+  return (
+    <AnalysisProvider existingDealId={existingDealId}>
+      <AnalyzeContent />
+    </AnalysisProvider>
+  );
+}
 
 function AnalyzeContent() {
   const {
@@ -179,13 +191,5 @@ function AnalyzeContent() {
         </div>
       </div>
     </div>
-  );
-}
-
-export default function AnalyzePage() {
-  return (
-    <AnalysisProvider>
-      <AnalyzeContent />
-    </AnalysisProvider>
   );
 }

@@ -16,7 +16,8 @@ export async function analyzeCoreData(context: string): Promise<AnalysisData> {
     Du bist ein kompromissloser deutscher Sachverständiger, WEG-Recht-Experte und Senior Real Estate Analyst. 
     Analysiere die vorliegenden Dokumente (Exposé, Teilungserklärung, WEG-Protokolle, Wirtschaftsplan, Grundbuch etc.) mit absoluter juristischer und kaufmännischer Präzision.
 
-    Deine Aufgabe ist es, den ultimativen "Deal-Prüfer" durchzuführen. Suche aktiv nach versteckten Risiken, finanziellen Fallen und Widersprüchen zwischen den Dokumenten.
+    WICHTIG ZU DEN QUELLEN (EVIDENCE):
+    Jedes Risiko und jeder positive Befund MUSS einen echten Beleg aus dem übergebenen Text enthalten. Erfinde NIEMALS Seitenzahlen oder Textsnippets (keine Platzhalter wie "Dokumentname" oder "Belegtext"). Wenn eine genaue Seite nicht ersichtlich ist, trage 1 ein, aber das Snippet muss ein echter, wörtlicher Zitat-Auszug aus dem Text sein!
 
     Du MUSST ein striktes JSON-Objekt zurückgeben, das exakt diesem TypeScript-Schema entspricht:
     {
@@ -32,7 +33,7 @@ export async function analyzeCoreData(context: string): Promise<AnalysisData> {
           "title": "Prägnanter Risikotitel",
           "whyItMatters": "Konkrete finanzielle oder rechtliche Auswirkung",
           "source": {
-            "documentType": "Exposé oder Teilungserklärung etc.",
+            "documentType": "Echter Name des Dokuments aus dem Kontext",
             "pageNumber": 1 (Integer),
             "snippet": "Exakter Originaltextauszug als Beleg"
           },
@@ -44,9 +45,9 @@ export async function analyzeCoreData(context: string): Promise<AnalysisData> {
           "title": "Positiver Aspekt",
           "description": "Erklärung warum das gut für den Käufer ist",
           "source": {
-            "documentType": "Dokumentname",
+            "documentType": "Echter Name des Dokuments",
             "pageNumber": 1,
-            "snippet": "Belegtext"
+            "snippet": "Echter Belegtext"
           }
         }
       ],
@@ -107,25 +108,15 @@ export async function analyzeCoreData(context: string): Promise<AnalysisData> {
 
   const raw = completion.choices[0].message.content || "{}";
   try {
-    return JSON.parse(raw.replace(/```json/g, "").replace(/```/g, ""));
+    const parsed = JSON.parse(raw.replace(/```json/g, "").replace(/```/g, ""));
+    return parsed;
   } catch (e) {
-    console.error("Fehler beim Parsen der KI-Antwort:", raw);
-    // Strikter Fallback, der dem AnalysisData-Schema entspricht
-    return {
-      leadScore: 50,
-      executiveSummary:
-        "Die Dokumente konnten nicht vollständig strukturiert eingelesen werden.",
-      confidence: 0.5,
-      overallRecommendation: "Manuelle Prüfung erforderlich.",
-      verificationRequired: true,
-      topRisks: [],
-      positiveFindings: [],
-      missingDocuments: [],
-      negotiationPoints: [],
-      sellerQuestions: [],
-      timeline: [],
-      crossDocumentConflicts: [],
-    };
+    console.error("🔥 Kritischer Fehler beim Parsen der KI-Antwort:", raw);
+    // Wir werfen einen echten Fehler, damit der Job-Status auf "failed" gesetzt wird
+    // und der Nutzer im Frontend einen Retry-Button erhält.
+    throw new Error(
+      "Die KI konnte die Dokumente nicht strukturieren. Bitte versuchen Sie es erneut.",
+    );
   }
 }
 
@@ -153,5 +144,10 @@ export async function analyzeDeepDiveData(
   });
 
   const raw = completion.choices[0].message.content || "{}";
-  return JSON.parse(raw.replace(/```json/g, "").replace(/```/g, ""));
+  try {
+    return JSON.parse(raw.replace(/```json/g, "").replace(/```/g, ""));
+  } catch (e) {
+    console.error("🔥 Fehler beim Deep Dive Parsen:", raw);
+    throw new Error("Fehler bei der tiefgehenden Dokumentenanalyse.");
+  }
 }

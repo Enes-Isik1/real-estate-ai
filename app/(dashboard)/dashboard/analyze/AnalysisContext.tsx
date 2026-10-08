@@ -31,7 +31,13 @@ const AnalysisContext = createContext<AnalysisContextType | undefined>(
   undefined,
 );
 
-export function AnalysisProvider({ children }: { children: React.ReactNode }) {
+export function AnalysisProvider({
+  children,
+  existingDealId,
+}: {
+  children: React.ReactNode;
+  existingDealId?: string;
+}) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -117,6 +123,10 @@ export function AnalysisProvider({ children }: { children: React.ReactNode }) {
       selectedFiles.forEach((file) => {
         formData.append("files", file);
       });
+
+      if (existingDealId) {
+        formData.append("existingDealId", existingDealId);
+      }
 
       const response = await fetch("/api/analyze", {
         method: "POST",
