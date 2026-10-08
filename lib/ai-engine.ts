@@ -1,4 +1,5 @@
 import { OpenAI } from "openai";
+import { AnalysisData } from "./types/analysis";
 
 const mistral = new OpenAI({
   apiKey: process.env.MISTRAL_API_KEY,
@@ -8,60 +9,87 @@ const mistral = new OpenAI({
 /**
  * ENTERPRISE DEAL INTELLIGENCE 2.0
  * Führt automatische Klassifizierung, Cross-Document-Analyse, Widerspruchserkennung und Risikopriorisierung durch.
+ * Gibt strikt das vereinheitlichte AnalysisData-Schema zurück.
  */
-export async function analyzeCoreData(context: string) {
+export async function analyzeCoreData(context: string): Promise<AnalysisData> {
   const prompt = `
     Du bist ein kompromissloser deutscher Sachverständiger, WEG-Recht-Experte und Senior Real Estate Analyst. 
     Analysiere die vorliegenden Dokumente (Exposé, Teilungserklärung, WEG-Protokolle, Wirtschaftsplan, Grundbuch etc.) mit absoluter juristischer und kaufmännischer Präzision.
 
-    Deine Aufgabe ist es, den ultimativen "Deal-Prüfer" durchzuführen. Suche aktiv nach versteckten Risiken, finanziellen Fallen und Widersprüchen.
+    Deine Aufgabe ist es, den ultimativen "Deal-Prüfer" durchzuführen. Suche aktiv nach versteckten Risiken, finanziellen Fallen und Widersprüchen zwischen den Dokumenten.
 
-    Gib ein striktes JSON-Objekt zurück mit exakt diesen Feldern:
+    Du MUSST ein striktes JSON-Objekt zurückgeben, das exakt diesem TypeScript-Schema entspricht:
     {
-      "classifiedDocuments": [
-        {
-          "filename": "Exakter Dateiname aus dem Kontext",
-          "detectedType": "Exposé" (Wähle aus: "Exposé", "Teilungserklärung", "WEG-Protokoll", "Wirtschaftsplan", "Grundbuchauszug", "Energieausweis", "Grundriss", "Sonstiges")
-        }
-      ],
-      "leadScore": (Zahl von 0 bis 100. 100 = perfekter, fehlerfreier Deal. Bei ungedeckten Sanierungsrückstauten oder massiven Widersprüchen sofort unter 50 fallen lassen!),
-      "overallRecommendation": "Harte, glasklare Handlungsempfehlung für den Makler auf Deutsch (z.B. 'Nicht ohne Nachverhandlung anbieten wegen X')",
-      "executiveSummary": "Kaufmännische Zusammenfassung auf Punkt gebracht (2-3 Sätze)",
+      "leadScore": (Zahl von 0 bis 100. 100 = perfekter Deal. Bei ungedeckten Sanierungsrückstauten oder massiven Widersprüchen sofort unter 50 fallen lassen!),
+      "executiveSummary": "Kaufmännische Zusammenfassung auf den Punkt gebracht (2-3 Sätze)",
+      "confidence": (Zahl von 0 bis 1, z.B. 0.95 für hohe Sicherheit bei der Texterkennung),
+      "overallRecommendation": "Harte, glasklare Handlungsempfehlung für den Makler auf Deutsch",
+      "verificationRequired": (boolean: true, falls kritische manuelle Prüfungen nötig sind),
       "topRisks": [
         {
           "id": "1",
           "severity": "High" (oder "Medium" or "Low"),
-          "title": "Prägnanter Risikotitel (z.B. 'Instandhaltungsrücklage unzureichend für beschlossene Dachsanierung')",
-          "whyItMatters": "Konkrete finanzielle oder rechtliche Auswirkung auf den Käufer",
-          "sourceDoc": "Exakter Name des Quelldokuments",
-          "page": 1 (Exakte Seitenzahl als Integer)
+          "title": "Prägnanter Risikotitel",
+          "whyItMatters": "Konkrete finanzielle oder rechtliche Auswirkung",
+          "source": {
+            "documentType": "Exposé oder Teilungserklärung etc.",
+            "pageNumber": 1 (Integer),
+            "snippet": "Exakter Originaltextauszug als Beleg"
+          },
+          "confidence": 0.9
         }
       ],
-      "crossDocumentConflicts": [
+      "positiveFindings": [
         {
-          "field": "Streitpunkt (z.B. Wohnfläche, Baujahr, Stellplatz, Instandhaltungsrücklage)",
-          "sourceA": "Aussage in Dokument A mit Quelle (z.B. Exposé: 92 m²)",
-          "sourceB": "Abweichende Aussage in Dokument B mit Quelle (z.B. Grundriss: 87,4 m²)",
-          "recommendation": "Konkrete Handlungsanweisung zur Klärung"
-        }
-      ],
-      "negotiationPoints": [
-        {
-          "title": "Harter Verhandlungspunkt",
-          "argument": "Konkretes Argument für den Makler zur Kaufpreisreduktion oder Absicherung"
+          "title": "Positiver Aspekt",
+          "description": "Erklärung warum das gut für den Käufer ist",
+          "source": {
+            "documentType": "Dokumentname",
+            "pageNumber": 1,
+            "snippet": "Belegtext"
+          }
         }
       ],
       "missingDocuments": [
         {
-          "title": "Name des fehlenden Dokuments",
-          "category": "required" (oder "recommended" or "optional"),
-          "reason": "Rechtliche oder wirtschaftliche Notwendigkeit"
+          "name": "Name des fehlenden Dokuments",
+          "required": true (oder false)
         }
       ],
-      "nextActions": [
+      "negotiationPoints": [
         {
-          "action": "Konkreter nächster Schritt für den Makler",
-          "priority": "High" (oder "Medium" or "Low")
+          "title": "Verhandlungspunkt",
+          "argument": "Argument für den Makler zur Kaufpreisreduktion",
+          "leverageScore": 85 (Zahl von 0 bis 100)
+        }
+      ],
+      "sellerQuestions": [
+        {
+          "question": "Konkrete Frage an den Verkäufer",
+          "context": "Hintergrund der Frage"
+        }
+      ],
+      "timeline": [
+        {
+          "event": "Ereignisbeschreibung",
+          "date": "Datum oder Zeitraum (z.B. Q3 2026)"
+        }
+      ],
+      "crossDocumentConflicts": [
+        {
+          "title": "Titel des Widerspruchs (z.B. Wohnfläche weicht ab)",
+          "description": "Detaillierte Beschreibung des Widerspruchs",
+          "severity": "High" (oder "Medium" or "Low"),
+          "sourceA": {
+            "documentType": "Dokument A",
+            "pageNumber": 2,
+            "snippet": "Aussage A"
+          },
+          "sourceB": {
+            "documentType": "Dokument B",
+            "pageNumber": 5,
+            "snippet": "Aussage B"
+          }
         }
       ]
     }
@@ -82,17 +110,21 @@ export async function analyzeCoreData(context: string) {
     return JSON.parse(raw.replace(/```json/g, "").replace(/```/g, ""));
   } catch (e) {
     console.error("Fehler beim Parsen der KI-Antwort:", raw);
+    // Strikter Fallback, der dem AnalysisData-Schema entspricht
     return {
-      classifiedDocuments: [],
       leadScore: 50,
-      overallRecommendation: "Solides Objekt, manuelle Prüfung empfohlen.",
       executiveSummary:
         "Die Dokumente konnten nicht vollständig strukturiert eingelesen werden.",
+      confidence: 0.5,
+      overallRecommendation: "Manuelle Prüfung erforderlich.",
+      verificationRequired: true,
       topRisks: [],
-      crossDocumentConflicts: [],
-      negotiationPoints: [],
+      positiveFindings: [],
       missingDocuments: [],
-      nextActions: [],
+      negotiationPoints: [],
+      sellerQuestions: [],
+      timeline: [],
+      crossDocumentConflicts: [],
     };
   }
 }
@@ -103,7 +135,7 @@ export async function analyzeCoreData(context: string) {
 export async function analyzeDeepDiveData(
   context: string,
   schemaString: string,
-) {
+): Promise<AnalysisData> {
   const prompt = `
     Du bist ein Senior Real Estate Analyst. Führe eine vollständige Due Diligence durch.
     Gib AUSSCHLIESSLICH reines JSON zurück gemäß diesem Schema: 

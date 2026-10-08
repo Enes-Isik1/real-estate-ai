@@ -35,12 +35,13 @@ export async function POST(request: NextRequest) {
 
     const formData = await request.formData();
 
-    // 1. Formulardaten (Titel, Mandant, E-Mail) aus dem FormData auslesen
+    // Formulardaten auslesen
     const formTitle = formData.get("title")?.toString().trim();
     const formClientName = formData.get("clientName")?.toString().trim();
     const formClientEmail = formData.get("clientEmail")?.toString().trim();
+    const existingDealId = formData.get("dealId")?.toString().trim();
 
-    // Wir fangen sowohl "file" als auch "files" ab, um jegliche Diskrepanzen zu verhindern
+    // Wir fangen sowohl "file" als auch "files" ab
     const rawFiles =
       formData.getAll("file").length > 0
         ? formData.getAll("file")
@@ -57,10 +58,11 @@ export async function POST(request: NextRequest) {
     }
 
     let structuredContext = "";
-    const fileNames = [];
-    const allChunks: any[] = []; // Hier sammeln wir alle echten Chunks mit Seitennummer
+    const fileNames: string[] = [];
+    const allChunks: any[] = [];
+    const fileBuffers: { name: string; buffer: Buffer; type: string }[] = [];
 
-    // --- OPTIMIERTES PARALLELES PDF-PARSEN FÜR ENTERPRISE PERFORMANCE ---
+    // --- OPTIMIERTES PARALLELES PDF-PARSEN & BUFFER SPEICHERN ---
     const fileProcessingPromises = files.map(async (file) => {
       if (file.size > MAX_FILE_SIZE) {
         throw new Error(`Datei ${file.name} ist zu groß (max 10MB).`);
@@ -81,6 +83,8 @@ export async function POST(request: NextRequest) {
 
       return {
         name: file.name,
+        buffer,
+        type: file.type || "application/pdf",
         text: pdfData.text || "",
       };
     });
@@ -90,8 +94,9 @@ export async function POST(request: NextRequest) {
     for (const result of results) {
       if (!result) continue;
 
-      const { name, text: rawText } = result;
+      const { name, buffer, type, text: rawText } = result;
       fileNames.push(name);
+      fileBuffers.push({ name, buffer, type });
 
       const pages = rawText.split(/\f/);
 
@@ -135,107 +140,209 @@ export async function POST(request: NextRequest) {
     console.log("🚀 Starte Blitz-Analyse mit der KI...");
     const startTime = Date.now();
 
-    const coreAnalysis = await analyzeCoreData(structuredContext);
+    let coreAnalysis;
+    try {
+      coreAnalysis = await analyzeCoreData(structuredContext);
+    } catch (aiError: any) {
+      console.error("🔥 KI-Modell Fehler:", aiError);
+      return NextResponse.json(
+        {
+          error:
+            "Die KI-Analyse ist fehlgeschlagen. Bitte versuchen Sie es erneut.",
+        },
+        { status: 500 },
+      );
+    }
+
+    if (!coreAnalysis || typeof coreAnalysis.leadScore !== "number") {
+      return NextResponse.json(
+        {
+          error:
+            "Die KI konnte kein valides Analyseergebnis generieren. Bitte versuchen Sie es erneut.",
+        },
+        { status: 500 },
+      );
+    }
 
     console.log(
       `⚡ KI-Analyse erfolgreich in ${Date.now() - startTime}ms abgeschlossen.`,
     );
 
-    // Lead Score validieren und runden
     const sanitizedLeadScore = Math.round(Number(coreAnalysis.leadScore) || 50);
     const finalStatus = sanitizedLeadScore > 70 ? "Ready" : "Needs Review";
 
-    // Struktur erweitern, um Konflikte und Next Actions für das Frontend mitzuführen
+    // --- PUNKT 15: TRANSPARENTER MULTI-FAKTOR DEAL SCORE ---
+    // Berechnung der Teil-Scores basierend auf den Analyseergebnissen
+    const riskCount = (coreAnalysis.topRisks || []).length;
+    const missingCount = (coreAnalysis.missingDocuments || []).length;
+    const conflictCount = (coreAnalysis.crossDocumentConflicts || []).length;
+
+    const documentCompletenessScore = Math.max(20, 100 - missingCount * 20);
+    const riskSafetyScore = Math.max(
+      10,
+      100 - riskCount * 15 - conflictCount * 25,
+    );
+    const legalComplianceScore =
+      conflictCount === 0 ? 95 : Math.max(30, 95 - conflictCount * 30);
+    const financialClarityScore = sanitizedLeadScore; // Basiswert
+
+    const multiFactorScore = {
+      overallScore: sanitizedLeadScore,
+      breakdown: {
+        documentCompleteness: {
+          score: documentCompletenessScore,
+          weight: "30%",
+          label: "Unterlagen-Vollständigkeit",
+          description:
+            missingCount === 0
+              ? "Alle Pflichtdokumente vorhanden."
+              : `${missingCount} Dokument(e) fehlen noch.`,
+        },
+        riskSafety: {
+          score: riskSafetyScore,
+          weight: "30%",
+          label: "Risiko- & Lastenfreiheit",
+          description:
+            riskCount === 0
+              ? "Keine schweren Lasten oder Risiken."
+              : `${riskCount} potenzielle Risiken identifiziert.`,
+        },
+        legalCompliance: {
+          score: legalComplianceScore,
+          weight: "20%",
+          label: "Rechtliche Konsistenz",
+          description:
+            conflictCount === 0
+              ? "Keine Widersprüche in den Akten."
+              : `${conflictCount} Widerspruch/-sprüche zwischen Dokumenten.`,
+        },
+        financialClarity: {
+          score: financialClarityScore,
+          weight: "20%",
+          label: "Deal-Attraktivität & Rendite",
+          description: "Basierend auf Kaufpreis, Objektzustand und Marktdaten.",
+        },
+      },
+    };
+
     const aiAnalysis = {
       leadScore: sanitizedLeadScore,
+      multiFactorScore, // Hinzugefügt für Punkt 15
       executiveSummary:
         coreAnalysis.executiveSummary || "Keine Zusammenfassung verfügbar.",
       overallRecommendation:
         coreAnalysis.overallRecommendation || "Solides Objekt.",
-      confidence: 8,
-      verificationRequired: false,
+      confidence: coreAnalysis.confidence || 0.9,
+      verificationRequired: coreAnalysis.verificationRequired || false,
       topRisks: coreAnalysis.topRisks || [],
       crossDocumentConflicts: coreAnalysis.crossDocumentConflicts || [],
       nextActions: coreAnalysis.nextActions || [],
       positiveFindings: coreAnalysis.positiveFindings || [],
       missingDocuments: coreAnalysis.missingDocuments || [],
       negotiationPoints: coreAnalysis.negotiationPoints || [],
-      sellerQuestions: [],
-      timeline: [],
+      sellerQuestions: coreAnalysis.sellerQuestions || [],
+      timeline: coreAnalysis.timeline || [],
     };
 
-    // Intelligenter Fallback für den Deal-Titel (Nimmt den Formulartitel oder den Dateinamen)
-    const fallbackTitle = fileNames[0]
-      ? fileNames[0].replace(/\.[^/.]+$/, "")
-      : "Neue Immobilie";
-    const finalDealTitle = formTitle || fallbackTitle;
-
-    const propertyAsset: PropertyAsset = {
-      id: crypto.randomUUID(),
-      name: finalDealTitle,
-      createdAt: new Date().toISOString(),
-      files: fileNames,
-      analysis: aiAnalysis,
-      timeline: [],
-      decisionCenter: {
-        score: sanitizedLeadScore,
-        status: finalStatus,
-        summary: aiAnalysis.overallRecommendation,
-      },
-    };
-
-    // 2. Neuen Deal in Supabase anlegen INKL. Titel, Kundendaten und user_id
-    const { data: newDeal, error: dealError } = await supabaseAdmin
-      .from("deals")
-      .insert([
-        {
-          title: finalDealTitle,
-          status: "Analyzing",
-          user_id: user.id,
-          client_name: formClientName || "Mandant",
-          client_email: formClientEmail || "kontakt@dealpilot.ai",
-        },
-      ])
-      .select()
-      .single();
-
-    if (dealError) {
-      console.error(
-        "🔥 Fehler beim Speichern des Deals in Supabase:",
-        dealError,
-      );
-      throw new Error(
-        "Datenbankfehler beim Anlegen des Deals: " + dealError.message,
-      );
-    }
-
-    const dealId = newDeal.id;
+    let dealId = existingDealId;
+    let finalDealTitle = formTitle || "Neue Immobilie";
 
     if (dealId) {
-      // 3. Job-Eintrag registrieren
+      console.log(`🔄 Aktualisiere bestehenden Deal ID: ${dealId}`);
+      const { data: existingDeal } = await supabaseAdmin
+        .from("deals")
+        .select("title")
+        .eq("id", dealId)
+        .single();
+
+      if (existingDeal) {
+        finalDealTitle = existingDeal.title;
+      }
+    } else {
+      const fallbackTitle = fileNames[0]
+        ? fileNames[0].replace(/\.[^/.]+$/, "")
+        : "Neue Immobilie";
+      finalDealTitle = formTitle || fallbackTitle;
+
+      const { data: newDeal, error: dealError } = await supabaseAdmin
+        .from("deals")
+        .insert([
+          {
+            title: finalDealTitle,
+            status: "Analyzing",
+            user_id: user.id,
+            client_name: formClientName || "Mandant",
+            client_email: formClientEmail || "kontakt@dealpilot.ai",
+          },
+        ])
+        .select()
+        .single();
+
+      if (dealError) {
+        console.error(
+          "🔥 Fehler beim Speichern des Deals in Supabase:",
+          dealError,
+        );
+        throw new Error(
+          "Datenbankfehler beim Anlegen des Deals: " + dealError.message,
+        );
+      }
+
+      dealId = newDeal.id;
+
       await supabaseAdmin.from("jobs").insert([
         {
           deal_id: dealId,
           status: "completed",
         },
       ]);
+    }
 
-      // 4. Zugehörige Dokumente mit automatischer Klassifizierung aus coreAnalysis speichern
-      const documentInserts = fileNames.map((fileName) => {
+    if (dealId) {
+      // --- PUNKT 14: SUPABASE STORAGE UPLOAD FÜR ORIGINAL-PDFs ---
+      const documentInserts = [];
+      const bucketName = "deal-documents"; // Stelle sicher, dass dieser Bucket in Supabase existiert
+
+      for (const fileObj of fileBuffers) {
+        const uniqueFileName = `${dealId}/${Date.now()}_${fileObj.name}`;
+
+        const { error: storageError } = await supabaseAdmin.storage
+          .from(bucketName)
+          .upload(uniqueFileName, fileObj.buffer, {
+            contentType: fileObj.type,
+            upsert: true,
+          });
+
+        let publicUrl = null;
+        if (!storageError) {
+          const { data: urlData } = supabaseAdmin.storage
+            .from(bucketName)
+            .getPublicUrl(uniqueFileName);
+          publicUrl = urlData?.publicUrl || null;
+        } else {
+          console.warn(
+            `⚠️ Supabase Storage Upload Warnung für ${fileObj.name}:`,
+            storageError.message,
+          );
+        }
+
         const matchedDoc = coreAnalysis.classifiedDocuments?.find(
-          (d: any) => d.filename === fileName,
+          (d: any) => d.filename === fileObj.name,
         );
-        return {
+
+        documentInserts.push({
           deal_id: dealId,
-          filename: fileName,
+          filename: fileObj.name,
           document_type: matchedDoc?.detectedType || "Sonstiges",
+          storage_path: uniqueFileName,
+          public_url: publicUrl,
           upload_date: new Date().toISOString(),
-        };
-      });
+        });
+      }
 
       await supabaseAdmin.from("documents").insert(documentInserts);
 
-      // 5. Versionsnummer ermitteln
+      // Versionsnummer ermitteln
       const { count: existingAnalysesCount } = await supabaseAdmin
         .from("analyses")
         .select("*", { count: "exact", head: true })
@@ -243,7 +350,7 @@ export async function POST(request: NextRequest) {
 
       const nextVersion = (existingAnalysesCount || 0) + 1;
 
-      // 6. Analyseergebnis speichern (Inklusive crossDocumentConflicts und nextActions im raw_json)
+      // Analyseergebnis speichern
       const { data: savedAnalysis, error: analysisError } = await supabaseAdmin
         .from("analyses")
         .insert([
@@ -264,14 +371,13 @@ export async function POST(request: NextRequest) {
         throw analysisError;
       }
 
-      // 7. Risiken abspeichern mit validierter Seitenzahl
+      // Risiken abspeichern
       if (
         aiAnalysis.topRisks &&
         aiAnalysis.topRisks.length > 0 &&
         savedAnalysis
       ) {
         const riskInserts = aiAnalysis.topRisks.map((risk: any) => {
-          // Typ-Prüfung für die Seitenzahl (Zahl erzwingen)
           const rawPage = risk.source?.pageNumber || risk.page || 1;
           const parsedPage =
             typeof rawPage === "number" ? rawPage : parseInt(rawPage);
@@ -291,14 +397,24 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    propertyAsset.id = dealId;
-
     await supabaseAdmin
       .from("deals")
       .update({ status: finalStatus })
       .eq("id", dealId);
 
-    propertyAsset.decisionCenter.status = finalStatus;
+    const propertyAsset: PropertyAsset = {
+      id: dealId!,
+      name: finalDealTitle,
+      createdAt: new Date().toISOString(),
+      files: fileNames,
+      analysis: aiAnalysis,
+      timeline: aiAnalysis.timeline || [],
+      decisionCenter: {
+        score: sanitizedLeadScore,
+        status: finalStatus,
+        summary: aiAnalysis.overallRecommendation,
+      },
+    };
 
     return NextResponse.json({
       success: true,
@@ -311,24 +427,10 @@ export async function POST(request: NextRequest) {
     let errorMessage =
       "Die Analyse konnte nicht abgeschlossen werden. Bitte versuchen Sie es erneut.";
 
-    if (
-      error?.message?.includes("API_KEY") ||
-      error?.message?.includes("Gemini") ||
-      error?.status === 429
-    ) {
+    if (error?.status === 429) {
       errorMessage =
-        "Der KI-Dienst ist derzeit überlastet oder nicht erreichbar. Bitte versuchen Sie es in wenigen Minuten erneut.";
-    } else if (
-      error?.message?.includes("Supabase") ||
-      error?.code?.startsWith("PGRST")
-    ) {
-      errorMessage =
-        "Datenbankfehler: Die Analyseergebnisse konnten nicht gespeichert werden.";
-    } else if (
-      error?.message &&
-      !error.message.includes("JSON") &&
-      !error.message.includes("fetch")
-    ) {
+        "Der KI-Dienst ist derzeit überlastet. Bitte versuchen Sie es in wenigen Minuten erneut.";
+    } else if (error?.message) {
       errorMessage = error.message;
     }
 

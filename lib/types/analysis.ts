@@ -1,20 +1,57 @@
-export type RiskSeverity = 'High' | 'Medium' | 'Low';
-// Ganz oben in lib/types/analysis.ts einfügen:
-export type DealStatus = 'Draft' | 'Analyzing' | 'Ready' | 'Needs Review' | 'Archived';
+// lib/types/analysis.ts
 
+export type RecommendationType =
+  | "Proceed"
+  | "Proceed with Conditions"
+  | "Delay Closing"
+  | "High Risk"
+  | "Reject";
+
+export type RiskSeverity = "High" | "Medium" | "Low";
+export type ExposureLevel = "Low" | "Medium" | "High";
+export type DealStatus =
+  | "Draft"
+  | "Analyzing"
+  | "Ready"
+  | "Needs Review"
+  | "Archived";
+
+// --- Multi-Faktor Score (Punkt 15) ---
+export interface MultiFactorScoreBreakdownItem {
+  score: number;
+  weight: string;
+  label: string;
+  description: string;
+}
+
+export interface MultiFactorScore {
+  overallScore: number;
+  breakdown: {
+    documentCompleteness: MultiFactorScoreBreakdownItem;
+    riskSafety: MultiFactorScoreBreakdownItem;
+    legalCompliance: MultiFactorScoreBreakdownItem;
+    financialClarity: MultiFactorScoreBreakdownItem;
+  };
+}
+
+// --- Quellen & Beweiskette (Evidence) ---
 export interface Source {
   documentType: string;
   pageNumber: number;
   snippet: string;
 }
 
+// --- Risiken ---
 export interface Risk {
-  id: string;
-  severity: 'High' | 'Medium' | 'Low';
+  id?: string;
+  severity: RiskSeverity;
   title: string;
   whyItMatters: string;
-  source: Source;
+  source?: Source;
   confidence: number;
+  pageNumber?: number; // Fallback für flache Strukturen
+  originalQuote?: string;
+  aiInterpretation?: string;
 }
 
 export interface PositiveFinding {
@@ -26,6 +63,7 @@ export interface PositiveFinding {
 export interface MissingDocument {
   name: string;
   required: boolean;
+  status?: "Missing" | "Available" | "Pending";
 }
 
 export interface NegotiationPoint {
@@ -52,11 +90,14 @@ export interface Conflict {
   sourceB: Source;
 }
 
+// --- Haupt-Analyseobjekt ---
 export interface AnalysisData {
   leadScore: number;
+  multiFactorScore?: MultiFactorScore; // NEU: Multi-Faktor Aufschlüsselung
   executiveSummary: string;
   confidence: number;
   overallRecommendation: string;
+  aiRecommendation?: RecommendationType; // Optional für Kompatibilität
   verificationRequired: boolean;
   topRisks: Risk[];
   positiveFindings: PositiveFinding[];
@@ -64,27 +105,47 @@ export interface AnalysisData {
   negotiationPoints: NegotiationPoint[];
   sellerQuestions: SellerQuestion[];
   timeline: TimelineEvent[];
-  // Hier gehört es rein:
   crossDocumentConflicts: Conflict[];
 }
 
+// --- Dokumenten- & Chunks-Typen ---
+export interface DocumentChunk {
+  id?: string;
+  page: number;
+  text: string;
+  documentName?: string;
+}
+
+export interface DocumentItem {
+  id: string;
+  deal_id: string;
+  filename: string;
+  document_type: string;
+  storage_path?: string;
+  public_url?: string;
+  upload_date: string;
+}
+
+// --- API & Property Assets ---
 export interface AnalysisResponse {
   success: boolean;
-  filesProcessed: string[]; // Geändert von fileName zu Array für Multi-Doc
-  pageCount: number;
+  filesProcessed?: string[];
+  pageCount?: number;
   analysis: AnalysisData;
-  chunks?: { page: number; text: string }[];
+  chunks?: DocumentChunk[];
+  property?: PropertyAsset;
 }
+
 export interface PropertyAsset {
-  id: string; // Eindeutige ID für die Immobilie
-  name: string; // z.B. Adresse
+  id: string;
+  name: string;
   createdAt: string;
-  files: string[]; // Liste der verarbeiteten Dokumente
-  analysis: AnalysisData; // Das, was wir bisher hatten
-  timeline: TimelineEvent[]; // Aus der Analyse extrahiert
+  files: string[];
+  analysis: AnalysisData;
+  timeline: TimelineEvent[];
   decisionCenter: {
     score: number;
-    status: DealStatus | "Green" | "Yellow" | "Red"; // Hier DealStatus ergänzt (optional kannst du Green/Yellow/Red für Rückwärtskompatibilität drin lassen)
+    status: DealStatus | "Green" | "Yellow" | "Red";
     summary: string;
   };
 }

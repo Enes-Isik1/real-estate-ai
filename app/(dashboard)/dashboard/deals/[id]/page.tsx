@@ -11,6 +11,8 @@ import {
   FileText,
   CheckCircle2,
   Trash2,
+  MessageSquare,
+  Send,
 } from "lucide-react";
 
 // Strikte Interfaces statt 'any'
@@ -20,6 +22,12 @@ interface RiskItem {
   whyItMatters?: string;
   page?: number;
   sourceDoc?: string;
+  source?: {
+    documentType?: string;
+    pageNumber?: number;
+    snippet?: string;
+  };
+  snippet?: string;
 }
 
 interface ConflictItem {
@@ -54,10 +62,11 @@ interface Deal {
     summary?: string;
     risks?: (string | RiskItem)[];
     topRisks?: RiskItem[];
-    crossDocumentConflicts?: ConflictItem[]; // NEU
-    nextActions?: NextActionItem[]; // NEU
+    crossDocumentConflicts?: ConflictItem[];
+    nextActions?: NextActionItem[];
     negotiationPoints?: { title: string; argument: string }[];
     missingDocuments?: MissingDoc[];
+    timeline?: { event: string; date: string }[];
   };
 }
 
@@ -69,16 +78,76 @@ export default function DealDetailPage() {
   const [deal, setDeal] = useState<Deal | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Enterprise State: Speichert manuell als erledigt/angefordert markierte Dokumente
   const [resolvedDocs, setResolvedDocs] = useState<string[]>([]);
-
-  // 1. States für die Suggested Reply (Interaktivität & Tonfall)
   const [replyText, setReplyText] = useState("");
   const [isRegenerating, setIsRegenerating] = useState(false);
-
-  // 2. States & Funktion für den Dokumenten-Upload in der Detailansicht
   const [isUploading, setIsUploading] = useState(false);
   const [uploadMessage, setUploadMessage] = useState("");
+
+  // Copilot States
+  const [copilotMessages, setCopilotMessages] = useState<
+    { role: "user" | "assistant"; content: string }[]
+  >([
+    {
+      role: "assistant",
+      content:
+        "Hallo! Ich bin dein DealPilot Copilot. Frag mich alles zu diesem Deal – z. B. 'Was spricht momentan gegen den Deal?' oder 'Welche Risiken gibt es in den Verträgen?'",
+    },
+  ]);
+  const [copilotInput, setCopilotInput] = useState("");
+  const [isCopilotLoading, setIsCopilotLoading] = useState(false);
+
+  const handleSendCopilotMessage = async (customQuery?: string) => {
+    const textToSend = customQuery || copilotInput;
+    if (!textToSend.trim() || isCopilotLoading) return;
+
+    const newMessages = [
+      ...copilotMessages,
+      { role: "user" as const, content: textToSend },
+    ];
+    setCopilotMessages(newMessages);
+    if (!customQuery) setCopilotInput("");
+    setIsCopilotLoading(true);
+
+    try {
+      const res = await fetch(`/api/deals/${dealId}/copilot`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: textToSend,
+          dealContext: deal,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setCopilotMessages([
+          ...newMessages,
+          { role: "assistant", content: data.answer },
+        ]);
+      } else {
+        setCopilotMessages([
+          ...newMessages,
+          {
+            role: "assistant",
+            content:
+              "Entschuldigung, es gab einen Fehler bei der Verarbeitung.",
+          },
+        ]);
+      }
+    } catch (err) {
+      console.error("Copilot Fehler:", err);
+      setCopilotMessages([
+        ...newMessages,
+        {
+          role: "assistant",
+          content: "Netzwerkfehler beim Anfragen des Copiloten.",
+        },
+      ]);
+    } finally {
+      setIsCopilotLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!dealId) return;
@@ -94,20 +163,18 @@ export default function DealDetailPage() {
         return;
       }
 
-      // 1. Enterprise Fallback: Prüfen ob der Deal frisch im sessionStorage liegt (z.B. nach direktem Upload)
       const cachedDeal = sessionStorage.getItem(`deal_${dealId}`);
       if (cachedDeal) {
         try {
           const parsedDeal = JSON.parse(cachedDeal);
           setDeal(parsedDeal);
           setLoading(false);
-          return; // Sofort abbrechen, da lokaler Cache vorhanden ist
+          return;
         } catch (e) {
           console.error("Fehler beim Parsen des SessionStorage Deals:", e);
         }
       }
 
-      // 2. Demo-IDs direkt behandeln
       if (
         dealId === "1" ||
         dealId === "lakefront-villa" ||
@@ -118,7 +185,6 @@ export default function DealDetailPage() {
       }
 
       try {
-        // 3. Von der Datenbank-API laden
         const res = await fetch(`/api/deals/${dealId}`);
         const data = await res.json();
 
@@ -129,18 +195,19 @@ export default function DealDetailPage() {
             title: prop.name,
             status: prop.decisionCenter?.status || "Reviewing",
             date: new Date(prop.createdAt).toLocaleDateString("de-DE"),
-            client: "Mandant",
-            email: "kontakt@dealpilot.ai",
+            client: prop.clientName || "Mandant",
+            email: prop.clientEmail || "kontakt@dealpilot.ai",
             score: prop.decisionCenter?.score || prop.analysis?.leadScore || 50,
             files: prop.files || [],
             analysis: {
               executiveSummary: prop.analysis?.executiveSummary,
               topRisks: prop.analysis?.topRisks || [],
               crossDocumentConflicts:
-                prop.analysis?.crossDocumentConflicts || [], // NEU
-              nextActions: prop.analysis?.nextActions || [], // NEU
+                prop.analysis?.crossDocumentConflicts || [],
+              nextActions: prop.analysis?.nextActions || [],
               negotiationPoints: prop.analysis?.negotiationPoints || [],
               missingDocuments: prop.analysis?.missingDocuments || [],
+              timeline: prop.analysis?.timeline || [],
             },
           };
           setDeal(fetchedDeal);
@@ -157,7 +224,6 @@ export default function DealDetailPage() {
     }
 
     function loadFallback() {
-      // Letzter Rettungsanker: Versuche den "latest_analyzed_deal" zu nehmen, falls die ID übereinstimmt
       const latest = sessionStorage.getItem("latest_analyzed_deal");
       if (latest) {
         try {
@@ -179,7 +245,6 @@ export default function DealDetailPage() {
     initDeal();
   }, [dealId, router]);
 
-  // Enterprise Funktion: Markiert ein Dokument als erledigt/angefordert und filtert es permanent aus
   const handleResolveDocument = (docTitle: string) => {
     const updatedResolved = [...resolvedDocs, docTitle];
     setResolvedDocs(updatedResolved);
@@ -189,7 +254,6 @@ export default function DealDetailPage() {
     );
   };
 
-  // Funktion zum Löschen des Deals
   const handleDeleteDeal = async () => {
     if (!confirm("Möchtest du diesen Deal wirklich unwiderruflich löschen?"))
       return;
@@ -201,12 +265,10 @@ export default function DealDetailPage() {
       const data = await res.json();
 
       if (data.success) {
-        // --- ENTERPRISE FIX: Cache sofort bereinigen ---
         sessionStorage.removeItem(`deal_${dealId}`);
         sessionStorage.removeItem("latest_analyzed_deal");
         sessionStorage.removeItem(`resolved_docs_${dealId}`);
 
-        // Zurück zum Dashboard und Cache invalidieren
         router.push("/dashboard");
         router.refresh();
       } else {
@@ -218,7 +280,6 @@ export default function DealDetailPage() {
     }
   };
 
-  // 4. Funktion für den Regenerate-Button mit verschiedenen Tonfällen
   const handleRegenerate = async (tone: string) => {
     setIsRegenerating(true);
     setTimeout(() => {
@@ -239,7 +300,6 @@ export default function DealDetailPage() {
     }, 500);
   };
 
-  // 5. Funktion für den Mandanten-Bericht Export
   const handleExportReport = () => {
     if (!deal) return;
 
@@ -321,7 +381,6 @@ export default function DealDetailPage() {
     reportWindow.document.close();
   };
 
-  // 6. Funktion zum Hochladen neuer Dokumente aus der Detailansicht
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0 || !dealId) return;
@@ -465,6 +524,21 @@ export default function DealDetailPage() {
     return true;
   });
 
+  // 👇 HIER DEN FALLBACK FÜR NEXT ACTIONS EINFÜGEN:
+  const derivedNextActions =
+    deal.analysis?.nextActions && deal.analysis.nextActions.length > 0
+      ? deal.analysis.nextActions
+      : [
+          ...(deal.analysis?.topRisks || []).slice(0, 2).map((risk: any) => ({
+            action: `Klärung von: ${typeof risk === "string" ? risk : risk.title}`,
+            priority: risk.severity || risk.level || "High",
+          })),
+          ...(filteredMissingDocs || []).slice(0, 2).map((doc: any) => ({
+            action: `Fehlendes Dokument anfordern: ${doc.title || doc.name}`,
+            priority: doc.required ? "High" : "Medium",
+          })),
+        ];
+
   return (
     <div className="max-w-[1000px] mx-auto pb-24 p-6 md:p-8 space-y-8 animate-fade-in-up">
       {/* Zurück-Button */}
@@ -527,7 +601,7 @@ export default function DealDetailPage() {
         </div>
       </div>
 
-      {/* Analyse Ergebnisse */}
+      {/* Analyse Ergebnisse (2-Spalten-Grid) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white border border-gray-200/60 rounded-3xl p-6 shadow-sm space-y-3">
           <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
@@ -540,68 +614,84 @@ export default function DealDetailPage() {
           </p>
         </div>
 
-        <div className="bg-white border border-gray-200/60 rounded-3xl p-6 shadow-sm space-y-3">
+        <div className="bg-white border border-gray-200/60 rounded-3xl p-6 shadow-sm space-y-4">
           <div className="flex justify-between items-center">
             <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
               <ShieldAlert className="w-5 h-5 text-rose-500" /> Risiken &
-              Hinweise
+              Evidenz-Prüfung
             </h3>
             <span className="px-2.5 py-0.5 bg-rose-50 text-rose-600 border border-rose-100 rounded-full text-[10px] font-bold uppercase tracking-wider">
               {risksList.length} Gefunden
             </span>
           </div>
 
-          <ul className="space-y-2.5">
+          <div className="space-y-4">
             {risksList.length > 0 ? (
-              risksList.map((risk: string | RiskItem, i: number) => {
-                const title = typeof risk === "string" ? risk : risk.title;
-                const details =
-                  typeof risk === "object" ? risk.whyItMatters : null;
+              risksList.map((risk: any, i: number) => {
+                const severity = risk.severity || "Medium";
+                const badgeColor =
+                  severity === "High"
+                    ? "bg-rose-50 text-rose-700 border-rose-200"
+                    : severity === "Medium"
+                      ? "bg-amber-50 text-amber-700 border-amber-200"
+                      : "bg-blue-50 text-blue-700 border-blue-200";
+
                 const sourceDoc =
-                  typeof risk === "object" ? risk.sourceDoc : null;
-                const page = typeof risk === "object" ? risk.page : null;
+                  risk.source?.documentType || risk.sourceDoc || "Dokument";
+                const pageNum = risk.source?.pageNumber || risk.page || 1;
+                const snippet = risk.source?.snippet || risk.snippet;
 
                 return (
-                  <li
+                  <div
                     key={i}
-                    className="text-xs text-gray-600 bg-rose-50/40 border border-rose-100/80 p-3 rounded-2xl flex flex-col gap-1.5 transition-all hover:bg-rose-50/70"
+                    className="bg-gray-50/60 border border-gray-200/80 p-5 rounded-2xl space-y-3 transition-all hover:border-indigo-200"
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-start gap-2">
-                        <span className="text-rose-500 font-bold mt-0.5">
-                          •
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          className={`px-2.5 py-0.5 border rounded-full text-[10px] font-bold uppercase tracking-wider ${badgeColor}`}
+                        >
+                          Relevanz: {severity}
                         </span>
-                        <strong className="text-gray-900 font-semibold">
-                          {title}
-                        </strong>
+                        <h4 className="font-bold text-gray-900 text-sm">
+                          {risk.title}
+                        </h4>
                       </div>
 
-                      {sourceDoc && (
-                        <span className="shrink-0 px-2 py-0.5 bg-white border border-rose-200 text-rose-700 rounded-lg text-[10px] font-bold shadow-sm flex items-center gap-1">
-                          <FileText className="w-3 h-3 text-rose-400" />
-                          {sourceDoc} {page ? `(S. ${page})` : ""}
-                        </span>
-                      )}
+                      <div className="flex items-center gap-1.5 px-3 py-1 bg-white border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 shadow-xs">
+                        <FileText className="w-3.5 h-3.5 text-indigo-500" />
+                        <span>{sourceDoc}</span>
+                        <span className="text-gray-400">•</span>
+                        <span className="text-indigo-600">Seite {pageNum}</span>
+                      </div>
                     </div>
-                    {details && (
-                      <p className="text-gray-500 pl-4 leading-relaxed">
-                        {details}
+
+                    {risk.whyItMatters && (
+                      <p className="text-xs text-gray-600 leading-relaxed">
+                        <strong className="text-gray-900">Bedeutung:</strong>{" "}
+                        {risk.whyItMatters}
                       </p>
                     )}
-                  </li>
+
+                    {snippet && (
+                      <div className="p-3 bg-white border-l-4 border-indigo-500 border-y border-r border-gray-200/60 rounded-r-xl text-xs text-gray-600 italic">
+                        „{snippet}“
+                      </div>
+                    )}
+                  </div>
                 );
               })
             ) : (
-              <p className="text-xs text-gray-400">
-                Keine kritischen Risiken erkannt.
+              <p className="text-xs text-gray-400 py-2">
+                Keine kritischen Risiken in den Dokumenten erkannt.
               </p>
             )}
-          </ul>
+          </div>
         </div>
       </div>
 
       {/* ========================================================================= */}
-      {/* NEU: WIDERSPRUCHSERKENNUNG (Cross-Document Conflicts)                      */}
+      {/* WIDERSPRUCHSERKENNUNG (Cross-Document Conflicts)                           */}
       {/* ========================================================================= */}
       {deal.analysis?.crossDocumentConflicts &&
         deal.analysis.crossDocumentConflicts.length > 0 && (
@@ -643,7 +733,7 @@ export default function DealDetailPage() {
         )}
 
       {/* ========================================================================= */}
-      {/* NEU: PROAKTIVE NEXT ACTIONS                                               */}
+      {/* PROAKTIVE NEXT ACTIONS                                                    */}
       {/* ========================================================================= */}
       {deal.analysis?.nextActions && deal.analysis.nextActions.length > 0 && (
         <div className="bg-white border border-gray-200/60 rounded-3xl p-6 shadow-sm space-y-4">
@@ -667,6 +757,31 @@ export default function DealDetailPage() {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* DYNAMISCHE EVIDENCE TIMELINE                                              */}
+      {/* ========================================================================= */}
+      {deal.analysis?.timeline && deal.analysis.timeline.length > 0 && (
+        <div className="bg-white border border-gray-200/60 rounded-3xl p-6 shadow-sm space-y-4">
+          <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
+            <FileText className="w-5 h-5 text-indigo-500" /> Ereignis-Timeline &
+            Meilensteine
+          </h3>
+          <div className="space-y-3 border-l-2 border-indigo-100 pl-4 ml-2">
+            {deal.analysis.timeline.map((item: any, i: number) => (
+              <div key={i} className="space-y-1 relative">
+                <span className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-indigo-600 ring-4 ring-white"></span>
+                <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">
+                  {item.date}
+                </span>
+                <p className="text-xs text-gray-700 font-medium">
+                  {item.event}
+                </p>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -792,6 +907,105 @@ export default function DealDetailPage() {
               Keine Dateinamen hinterlegt.
             </p>
           )}
+        </div>
+      </div>
+
+      {/* ========================================================================= */}
+      {/* FULL-CONTEXT COPILOT CHAT (Punkt 13)                                      */}
+      {/* ========================================================================= */}
+      <div className="bg-white border border-gray-200/60 rounded-3xl p-6 shadow-sm space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
+            <MessageSquare className="w-5 h-5 text-indigo-600" /> DealPilot
+            Full-Context Copilot
+          </h3>
+          <span className="px-2.5 py-0.5 bg-indigo-50 text-indigo-600 rounded-full text-[10px] font-bold uppercase tracking-wider">
+            Live Deal-State
+          </span>
+        </div>
+
+        <p className="text-xs text-gray-500">
+          Stelle komplexe Fragen zur Due Diligence, zu Risiken oder zur
+          Dokumentenlage dieses Deals.
+        </p>
+
+        {/* Schnellstart-Fragen */}
+        <div className="flex flex-wrap gap-2 pt-1">
+          <button
+            onClick={() =>
+              handleSendCopilotMessage("Was spricht momentan gegen den Deal?")
+            }
+            className="px-3 py-1.5 bg-gray-50 hover:bg-indigo-50 hover:text-indigo-600 text-gray-700 border border-gray-200 rounded-xl text-xs font-medium transition-all cursor-pointer"
+          >
+            💬 Was spricht momentan gegen den Deal?
+          </button>
+          <button
+            onClick={() =>
+              handleSendCopilotMessage(
+                "Gibt es kritische Widersprüche in den Unterlagen?",
+              )
+            }
+            className="px-3 py-1.5 bg-gray-50 hover:bg-indigo-50 hover:text-indigo-600 text-gray-700 border border-gray-200 rounded-xl text-xs font-medium transition-all cursor-pointer"
+          >
+            ⚠️ Kritische Widersprüche prüfen
+          </button>
+          <button
+            onClick={() =>
+              handleSendCopilotMessage(
+                "Welche Unterlagen fehlen noch zwingend?",
+              )
+            }
+            className="px-3 py-1.5 bg-gray-50 hover:bg-indigo-50 hover:text-indigo-600 text-gray-700 border border-gray-200 rounded-xl text-xs font-medium transition-all cursor-pointer"
+          >
+            📋 Fehlende Unterlagen zusammenfassen
+          </button>
+        </div>
+
+        {/* Chatverlauf */}
+        <div className="bg-gray-50/60 border border-gray-200/80 rounded-2xl p-4 max-h-[350px] overflow-y-auto space-y-3">
+          {copilotMessages.map((msg, index) => (
+            <div
+              key={index}
+              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+            >
+              <div
+                className={`max-w-[85%] p-3.5 rounded-2xl text-xs leading-relaxed ${
+                  msg.role === "user"
+                    ? "bg-indigo-600 text-white rounded-br-xs"
+                    : "bg-white text-gray-700 border border-gray-200/80 rounded-bl-xs shadow-xs"
+                }`}
+              >
+                {msg.content}
+              </div>
+            </div>
+          ))}
+          {isCopilotLoading && (
+            <div className="flex justify-start">
+              <div className="bg-white text-indigo-600 border border-gray-200/80 p-3.5 rounded-2xl text-xs font-medium animate-pulse">
+                Copilot analysiert den Deal-Kontext...
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Eingabefeld */}
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={copilotInput}
+            onChange={(e) => setCopilotInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSendCopilotMessage()}
+            placeholder="Frage eingeben (z.B. 'Welche Risiken hat das Grundbuch?')..."
+            className="flex-1 px-4 py-3 text-xs text-gray-700 bg-gray-50/50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+          />
+          <button
+            onClick={() => handleSendCopilotMessage()}
+            disabled={isCopilotLoading || !copilotInput.trim()}
+            className="px-5 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md cursor-pointer flex items-center gap-1.5"
+          >
+            <Send className="w-4 h-4" />
+            Senden
+          </button>
         </div>
       </div>
 

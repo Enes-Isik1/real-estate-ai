@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { OnboardingGuide } from "@/components/OnboardingGuide";
 
-// TypeScript Interface für einen Deal
+// TypeScript Interface für einen Deal mit erweitertem Audit/Evidence-Support
 interface Deal {
   id: string;
   title: string;
@@ -59,6 +59,7 @@ function InlineNewDealButton() {
   );
 }
 
+// Reduzierte, aussagekräftige Fallback-Deals mit echten Audit-/Evidence-Referenzen
 const INITIAL_DEALS: Deal[] = [
   {
     id: "1",
@@ -67,8 +68,30 @@ const INITIAL_DEALS: Deal[] = [
     email: "m.bauer@gmail.com",
     score: 94,
     status: "Reviewing",
-    date: "Today",
+    date: "Heute",
     price: "€4,250,000",
+    files: ["Grundbuchauszug_München.pdf", "Energieausweis.pdf"],
+    analysis: {
+      executiveSummary:
+        "Hochwertiges Investmentobjekt mit solider Dokumentenbasis und geringen rechtlichen Risiken.",
+      topRisks: [
+        {
+          title: "Wohnrecht im Grundbuch eingetragen",
+          whyItMatters:
+            "Kann die sofortige Eigennutzung oder Neuvermietung einschränken.",
+          sourceDoc: "Grundbuchauszug_München.pdf",
+          page: 3,
+        },
+      ],
+      negotiationPoints: [
+        {
+          title: "Kaufpreis-Anpassung",
+          argument:
+            "Aufgrund des bestehenden Wohnrechts ist ein Abschlag von ca. 3% marktgerecht.",
+        },
+      ],
+      missingDocuments: [],
+    },
   },
   {
     id: "2",
@@ -77,28 +100,22 @@ const INITIAL_DEALS: Deal[] = [
     email: "sarah.j@jenkins-capital.com",
     score: 88,
     status: "Missing Docs",
-    date: "Yesterday",
+    date: "Gestern",
     price: "€2,890,000",
-  },
-  {
-    id: "3",
-    title: "Cozy Apartment Berlin",
-    client: "Jonas Schmidt",
-    email: "jonas.schmidt@web.de",
-    score: 72,
-    status: "Contacted",
-    date: "3 days ago",
-    price: "€640,000",
-  },
-  {
-    id: "4",
-    title: "Commercial Loft Cologne",
-    client: "Elena Rostova",
-    email: "e.rostova@rostov-holdings.com",
-    score: 91,
-    status: "Reviewing",
-    date: "4 days ago",
-    price: "€1,850,000",
+    files: ["Teilungserklaerung.pdf"],
+    analysis: {
+      executiveSummary:
+        "Exklusive Immobilie, jedoch fehlen entscheidende Verwalterunterlagen für die abschließende Prüfung.",
+      topRisks: [],
+      negotiationPoints: [],
+      missingDocuments: [
+        {
+          title: "Protokolle der letzten 3 Eigentümerversammlungen",
+          category: "WEG-Unterlagen",
+          reason: "Notwendig zur Prüfung anstehender Sanierungskosten.",
+        },
+      ],
+    },
   },
 ];
 
@@ -112,57 +129,42 @@ export default function DashboardPage() {
   const [statusFilter, setStatusFilter] = useState("Show all");
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const getGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 12) return "Good morning";
-    if (hour < 18) return "Good afternoon";
-    return "Good evening";
-  };
-
-  // Enterprise: Echte Deals aus der Datenbank, SessionStorage (neue Deals) & statische Fallbacks kombinieren
+  // Deals laden (Kombination aus API, SessionStorage und minimalen Fallbacks)
   useEffect(() => {
     async function fetchUserDeals() {
       try {
         let dbDeals: Deal[] = [];
         const res = await fetch("/api/deals");
-        const data = await res.json();
 
-        if (data.success && data.properties && data.properties.length > 0) {
-          dbDeals = data.properties.map((prop: any) => ({
-            id: prop.id,
-            title: prop.title || prop.name || "Unbenannter Deal", // Prüft zuerst den echten DB-Titel
-            client: prop.client_name || prop.client || "Mandant", // Korrekt auf client_name gemappt
-            email: prop.client_email || prop.email || "kontakt@dealpilot.ai", // Korrekt auf client_email gemappt
-            score: prop.decisionCenter?.score || prop.analysis?.leadScore || 85,
-            status: prop.decisionCenter?.status || prop.status || "Reviewing",
-            date: new Date(
-              prop.createdAt || prop.created_at || Date.now(),
-            ).toLocaleDateString("de-DE"),
-            price: prop.price || "€1,000,000",
-            files: prop.files || [],
-            analysis: prop.analysis,
-          }));
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.properties && data.properties.length > 0) {
+            dbDeals = data.properties.map((prop: any) => ({
+              id: prop.id,
+              title: prop.title || prop.name || "Unbenannter Deal",
+              client: prop.client_name || prop.client || "Mandant",
+              email: prop.client_email || prop.email || "kontakt@dealpilot.ai",
+              score:
+                prop.decisionCenter?.score || prop.analysis?.leadScore || 85,
+              status: prop.decisionCenter?.status || prop.status || "Reviewing",
+              date: new Date(
+                prop.createdAt || prop.created_at || Date.now(),
+              ).toLocaleDateString("de-DE"),
+              price: prop.price || "€1,000,000",
+              files: prop.files || [],
+              analysis: prop.analysis,
+            }));
+          }
         }
 
-        // 1. Basis-Liste: Entweder echte DB-Deals oder die statischen INITIAL_DEALS als Fundament
+        // Basis-Liste festlegen (Entweder echte DB-Deals oder die reduzierten Fallbacks)
         let combined = dbDeals.length > 0 ? dbDeals : INITIAL_DEALS;
 
-        // Wenn die DB genutzt wird, wollen wir trotzdem die statischen Demo-Deals als Basis behalten,
-        // falls keine echten da sind, oder sie gemeinsam anzeigen.
-        // Hier stellen wir sicher, dass INITIAL_DEALS immer da sind, falls die DB leer ist:
-        if (dbDeals.length === 0) {
-          combined = INITIAL_DEALS;
-        } else {
-          // Optional: Falls du Datenbank-Deals UND die statischen Demo-Deals gleichzeitig sehen willst:
-          // combined = [...dbDeals, ...INITIAL_DEALS];
-        }
-
-        // 2. Frisch erstellten Deal aus dem SessionStorage (nach Analyse) hinzufügen
+        // Frisch analysierten Deal aus dem SessionStorage priorisiert voranstellen
         const storedDeal = sessionStorage.getItem("latest_analyzed_deal");
         if (storedDeal) {
           try {
             const parsedDeal = JSON.parse(storedDeal);
-            // Prüfen, ob er nicht schon in der Liste ist
             if (!combined.some((d) => d.id === parsedDeal.id)) {
               combined = [parsedDeal, ...combined];
             }
@@ -175,7 +177,7 @@ export default function DashboardPage() {
       } catch (e) {
         console.error("Fehler beim Laden der Deals:", e);
 
-        // Fallback bei Netzwerkfehlern: Statische Deals + evtl. SessionStorage
+        // Fallback im Fehlerfall
         let fallbackDeals = INITIAL_DEALS;
         const storedDeal = sessionStorage.getItem("latest_analyzed_deal");
         if (storedDeal) {
@@ -215,24 +217,17 @@ export default function DashboardPage() {
       deal.status.toLowerCase().includes(searchQuery.toLowerCase());
 
     if (statusFilter === "Show all") return matchesSearch;
-    if (statusFilter === "Reviewing")
-      return matchesSearch && deal.status === "Reviewing";
-    if (statusFilter === "Missing Docs")
-      return matchesSearch && deal.status === "Missing Docs";
-    if (statusFilter === "Contacted")
-      return matchesSearch && deal.status === "Contacted";
-    return matchesSearch;
+    return matchesSearch && deal.status === statusFilter;
   });
 
   return (
     <div className="space-y-8 animate-fade-in">
-      {/* Das Onboarding wird nur gerendert, wenn showOnboarding true ist */}
       {showOnboarding && (
         <OnboardingGuide onComplete={() => setShowOnboarding(false)} />
       )}
+
       {/* KPI CARDS SECTION */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        {/* Card 1 */}
         <div className="bg-white border border-gray-200/80 rounded-2xl p-5 shadow-enterprise hover:shadow-enterprise-hover transition-all duration-300">
           <div className="flex justify-between items-start">
             <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
@@ -248,7 +243,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Card 2 */}
         <div className="bg-white border border-gray-200/80 rounded-2xl p-5 shadow-enterprise hover:shadow-enterprise-hover transition-all duration-300">
           <div className="flex justify-between items-start">
             <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
@@ -263,7 +257,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Card 3 */}
         <div className="bg-white border border-gray-200/80 rounded-2xl p-5 shadow-enterprise hover:shadow-enterprise-hover transition-all duration-300">
           <div className="flex justify-between items-start">
             <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
@@ -279,7 +272,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Card 4 */}
         <div className="bg-white border border-gray-200/80 rounded-2xl p-5 shadow-enterprise hover:shadow-enterprise-hover transition-all duration-300">
           <div className="flex justify-between items-start">
             <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
@@ -310,7 +302,6 @@ export default function DashboardPage() {
         </div>
 
         <div className="flex items-center gap-2.5">
-          {/* Status Dropdown-Box */}
           <div className="relative flex items-center">
             <Globe className="absolute left-3 w-3.5 h-3.5 text-emerald-500" />
             <select
@@ -335,7 +326,6 @@ export default function DashboardPage() {
 
       {/* TABLE & AI INSIGHTS SPLIT-SECTION */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* LINKS: DIE DEALS TABELLE */}
         <div className="bg-white border border-gray-200/80 rounded-2xl shadow-enterprise overflow-hidden lg:col-span-8">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -373,7 +363,6 @@ export default function DashboardPage() {
                         key={deal.id}
                         className="hover:bg-indigo-50/30 transition-colors group cursor-pointer"
                         onClick={() => {
-                          // 1. Speichere die kompletten Deal-Daten direkt im SessionStorage
                           sessionStorage.setItem(
                             `deal_${deal.id}`,
                             JSON.stringify({
@@ -396,12 +385,9 @@ export default function DashboardPage() {
                               },
                             }),
                           );
-
-                          // 2. Navigiere zur Detailseite
                           router.push(`/dashboard/deals/${deal.id}`);
                         }}
                       >
-                        {/* Column 1: Deal Name & Price */}
                         <td className="py-4 px-6">
                           <div className="flex items-center gap-3.5">
                             <div className="relative w-10 h-10 flex items-center justify-center shrink-0">
@@ -530,7 +516,6 @@ export default function DashboardPage() {
               high-value lead.
             </p>
 
-            {/* Inner Alert Box: Urgent Action */}
             <div className="bg-rose-500/5 border border-rose-500/20 rounded-2xl p-4 space-y-2">
               <div className="flex justify-between items-center text-[10px] font-bold text-rose-400 uppercase tracking-wider">
                 <span>Urgent Action</span>
@@ -549,7 +534,6 @@ export default function DashboardPage() {
               </p>
             </div>
 
-            {/* Inner Alert Box: Hot Opportunity */}
             <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-2xl p-4 space-y-2">
               <div className="flex justify-between items-center text-[10px] font-bold text-indigo-400 uppercase tracking-wider">
                 <span>Hot Opportunity</span>
