@@ -1,9 +1,17 @@
 import { OpenAI } from "openai";
 import { AnalysisData } from "./types/analysis";
+import { z } from "zod";
 
 const mistral = new OpenAI({
   apiKey: process.env.MISTRAL_API_KEY,
   baseURL: "https://api.mistral.ai/v1",
+});
+
+const ScoringFactorSchema = z.object({
+  points: z.number(), // z.B. -12, +10, etc.
+  category: z.string(), // z.B. "Fehlende Protokolle", "Wohnfläche", etc.
+  reason: z.string(), // Genaue Erklärung, warum Punkte abgezogen/addiert wurden
+  pageNumber: z.number().optional(), // Referenz zur Seite im Dokument
 });
 
 /**
@@ -18,6 +26,13 @@ export async function analyzeCoreData(context: string): Promise<AnalysisData> {
 
     WICHTIG ZU DEN QUELLEN (EVIDENCE):
     Jedes Risiko und jeder positive Befund MUSS einen echten Beleg aus dem übergebenen Text enthalten. Erfinde NIEMALS Seitenzahlen oder Textsnippets (keine Platzhalter wie "Dokumentname" oder "Belegtext"). Wenn eine genaue Seite nicht ersichtlich ist, trage 1 ein, aber das Snippet muss ein echter, wörtlicher Zitat-Auszug aus dem Text sein!
+
+    SCORING-LOGIK:
+    Ermittle einen Deal-Score von 0 bis 100 Punkten ('leadScore'). Du musst die Vergabe transparent aufschlüsseln:
+    - Starte bei einem Basiswert von 100 Punkten.
+    - Ziehe Punkte ab für: Fehlende Pflichtdokumente (z.B. Wirtschaftsplan, WEG-Protokolle), unklare Instandhaltungsrücklagen, Widersprüche zwischen Exposé und Teilungserklärung, oder finanzielle Auffälligkeiten.
+    - Addiere Punkte für: Vollständige Unterlagen, gesunde Rücklagen, klare Sonderumlagen-Freiheit.
+    - Jede Abweichung muss im Array 'scoringBreakdown' mit exakter Punktzahl (z.B. -12), Kategorie, Begründung und Seitenzahl dokumentiert werden.
 
     Du MUSST ein striktes JSON-Objekt zurückgeben, das exakt diesem TypeScript-Schema entspricht:
     {
@@ -98,6 +113,23 @@ export async function analyzeCoreData(context: string): Promise<AnalysisData> {
     HIER SIND DIE DOKUMENTE:
     ${context}
   `;
+  // Neuer Prompt-Baustein für den Deal-Prüfer
+  const DEAL_EXAMINER_PROMPT = `
+  Du bist der leitende Deal-Prüfer von DealPilot. Erstelle einen kompakten, hochfokussierten Executive Briefing Report für den Immobilienmakler.
+  Beantworte in diesem Report präzise und unerbittlich folgende Kernfrage:
+  "Was muss ich als Makler über diesen Deal unbedingt wissen, bevor ich ihn meinem Kunden empfehle?"
+
+  Strukturiere das Ergebnis in folgenden JSON-Block:
+  {
+    "dealExaminerReport": {
+      "headline": "Ein prägnanter Satz, der den Zustand des Deals zusammenfasst (z.B. 'Solides Objekt mit verstecktem Sanierungsstau im Dachbereich')",
+      "criticalTakeaways": [
+        "Die 3 wichtigsten harten Fakten oder Risiken, die der Makler sofort kennen muss."
+      ],
+      "brokerActionItem": "Die wichtigste Handlungsempfehlung für den nächsten Anruf beim Verkäufer."
+    }
+  }
+`;
 
   const completion = await mistral.chat.completions.create({
     messages: [{ role: "user", content: prompt }],

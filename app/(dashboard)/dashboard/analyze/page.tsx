@@ -23,6 +23,9 @@ import { NegotiationPoints } from "@/components/analysis/NegotiationPoints";
 import ChatInterface from "@/app/api/analyze/chat/ChatInterface";
 import { ConflictAlert } from "@/components/analysis/ConflictAlert";
 import { AnalysisProvider, useAnalysis } from "./AnalysisContext";
+import { ScoreBreakdownCard } from "./ScoreBreakdownCard";
+import { DealExaminerCard } from "./DealExaminerCard";
+import { ExportButton } from "./ExportButton";
 
 export default function AnalyzePage() {
   const searchParams = useSearchParams();
@@ -30,12 +33,13 @@ export default function AnalyzePage() {
 
   return (
     <AnalysisProvider existingDealId={existingDealId}>
-      <AnalyzeContent />
+      {/* Wir übergeben existingDealId hier an die Content-Komponente */}
+      <AnalyzeContent dealId={existingDealId} />
     </AnalysisProvider>
   );
 }
 
-function AnalyzeContent() {
+function AnalyzeContent({ dealId }: { dealId?: string }) {
   const {
     isLoading,
     error,
@@ -137,17 +141,22 @@ function AnalyzeContent() {
   // 4. Haupt-Analyse Dashboard (Vollständig mit allen Komponenten!)
   return (
     <div className="space-y-8 max-w-[1500px] mx-auto pb-24 animate-fade-in">
-      <button
-        onClick={resetAnalysis}
-        className="inline-flex items-center gap-2 text-xs font-semibold text-gray-500 hover:text-indigo-600 transition-colors cursor-pointer bg-white border border-gray-200/80 px-4 py-2 rounded-xl shadow-sm"
-      >
-        <ArrowLeft className="w-3.5 h-3.5" /> Upload another document
-      </button>
+      <div className="flex items-center justify-between">
+        <button
+          onClick={resetAnalysis}
+          className="inline-flex items-center gap-2 text-xs font-semibold text-gray-500 hover:text-indigo-600 transition-colors cursor-pointer bg-white border border-gray-200/80 px-4 py-2 rounded-xl shadow-sm"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" /> Upload another document
+        </button>
+
+        <ExportButton dealId={dealId} />
+      </div>
 
       <DecisionCenter risks={risks} />
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-8 space-y-6">
+          <DealExaminerCard report={analysis?.dealExaminerReport} />
           <ExecutiveSummary
             summary={{
               title: "Executive Summary",
@@ -171,6 +180,10 @@ function AnalyzeContent() {
         </div>
 
         <div className="lg:col-span-4 space-y-6">
+          <ScoreBreakdownCard
+            score={analysis?.leadScore || 72}
+            breakdown={analysis?.scoringBreakdown || []}
+          />
           <AuditCard />
           <ChatInterface relevantChunks={chunks} />
           <div className="bg-white border border-gray-200/80 rounded-3xl p-6 shadow-enterprise space-y-4">
