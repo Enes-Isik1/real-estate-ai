@@ -50,7 +50,7 @@ async function callMistralWithRetry(
   prompt: string,
   maxRetries = 3,
 ): Promise<any> {
-  let delay = 2000; // Start bei 2 Sekunden
+  let delay = 5000; // Start bei 5 Sekunden
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -106,6 +106,11 @@ export async function analyzeCoreData(context: string): Promise<AnalysisData> {
     console.log(
       `🔄 Verarbeite Enterprise-Chunk ${i + 1} von ${textChunks.length}...`,
     );
+
+    if (i > 0) {
+      console.log("⏳ Warte 12 Sekunden für das Mistral Rate-Limit...");
+      await new Promise((resolve) => setTimeout(resolve, 12000));
+    }
 
     const prompt = `
       Du bist ein kompromissloser deutscher Sachverständiger, WEG-Recht-Experte und Senior Real Estate Analyst. 
