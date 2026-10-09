@@ -18,7 +18,7 @@ const ScoringFactorSchema = z.object({
  * ENTERPRISE CHUNKING: Teilt den Text intelligent an Absatzgrenzen (\n\n) auf,
  * damit Sätze und Paragraphen nicht zerrissen werden.
  */
-function chunkTextSmart(text: string, maxChunkChars: number = 10000): string[] {
+function chunkTextSmart(text: string, maxChunkChars: number = 5000): string[] {
   if (text.length <= maxChunkChars) return [text];
 
   const paragraphs = text.split(/\n\s*\n/);
@@ -83,7 +83,7 @@ async function callMistralWithRetry(
  * Mit intelligentem Smart-Chunking und automatischem Rate-Limit-Retry.
  */
 export async function analyzeCoreData(context: string): Promise<AnalysisData> {
-  const maxCharsPerRequest = 10000;
+  const maxCharsPerRequest = 5000;
   const textChunks = chunkTextSmart(context, maxCharsPerRequest);
 
   console.log(
