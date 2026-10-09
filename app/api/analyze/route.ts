@@ -5,6 +5,7 @@ import { PropertyAsset } from "@/lib/types/analysis";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { analyzeCoreData } from "@/lib/ai-engine";
 import { createClient } from "@/lib/utils/supabase/server";
+import * as Sentry from "@sentry/nextjs";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Sicherheitspuffer für Next.js
@@ -434,6 +435,8 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: any) {
     console.error("🔥 KRITISCHER API-FEHLER:", error);
+
+    Sentry.captureException(error);
 
     let errorMessage =
       "Die Analyse konnte nicht abgeschlossen werden. Bitte versuchen Sie es erneut.";
