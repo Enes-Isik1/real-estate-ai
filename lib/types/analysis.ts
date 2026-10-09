@@ -149,3 +149,32 @@ export interface PropertyAsset {
     summary: string;
   };
 }
+
+export interface DealAnalysis {
+  propertyName: string;
+  leadName: string;
+  leadEmail: string;
+  executiveSummary: string;
+  overallDealScore: number;
+  buyerReliability: number;
+  legalExposure: string;
+  financialExposure: string;
+  aiRecommendation: RecommendationType;
+  recommendationReason: string;
+  risks: Array<{
+    id: string;
+    level: string;
+    title: string;
+    page: number;
+    confidence: number;
+    whyItMatters: string;
+    originalQuote: string;
+    aiInterpretation: string;
+  }>;
+  missingDocuments: Array<{
+    name: string;
+    required: boolean;
+    status: string;
+  }>;
+  suggestedReply: string;
+}
