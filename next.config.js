@@ -1,4 +1,4 @@
-import sentryNextJs from "@sentry/nextjs";
+const { withSentryConfig } = require("@sentry/nextjs");
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -19,7 +19,7 @@ const nextConfig = {
   },
 };
 
-export default sentryNextJs.withSentryConfig(nextConfig, {
+module.exports = withSentryConfig(nextConfig, {
   org: "agencyx-9q",
   project: "javascript-nextjs",
   silent: !process.env.CI,
