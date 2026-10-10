@@ -1,13 +1,10 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { AnalysisData } from "./types/analysis";
 
-// Initialisierung mit dem offiziellen Google Gemini SDK
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// Initialisierung mit dem klassischen, stabilen SDK
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-/**
- * ENTERPRISE DEAL INTELLIGENCE 2.0 (Powered by Google Gemini 1.5 Flash)
- * Verarbeitet dank des riesigen Kontextfensters das gesamte Dokument im Stück.
- */
 export async function analyzeCoreData(context: string): Promise<AnalysisData> {
   console.log("🏢 Starte Google Gemini Enterprise-Analyse für DealPilot...");
 
@@ -97,16 +94,15 @@ export async function analyzeCoreData(context: string): Promise<AnalysisData> {
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
-      contents: prompt,
-      config: {
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
         responseMimeType: "application/json",
         temperature: 0.1,
       },
     });
 
-    const rawText = response.text || "{}";
+    const rawText = result.response.text() || "{}";
     const parsed = JSON.parse(rawText);
     return parsed as AnalysisData;
   } catch (error) {
@@ -117,9 +113,6 @@ export async function analyzeCoreData(context: string): Promise<AnalysisData> {
   }
 }
 
-/**
- * SCHRITT 2: Detaillierte Due Diligence (Deep Dive)
- */
 export async function analyzeDeepDiveData(
   context: string,
   schemaString: string,
@@ -134,16 +127,15 @@ export async function analyzeDeepDiveData(
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
-      contents: prompt,
-      config: {
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
         responseMimeType: "application/json",
         temperature: 0.1,
       },
     });
 
-    return JSON.parse(response.text || "{}");
+    return JSON.parse(result.response.text() || "{}");
   } catch (e) {
     console.error("🔥 Fehler beim Gemini Deep Dive:", e);
     throw new Error("Fehler bei der tiefgehenden Dokumentenanalyse.");
