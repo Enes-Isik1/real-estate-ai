@@ -1,3 +1,5 @@
+import * as Sentry from "@sentry/nextjs";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -17,9 +19,11 @@ const nextConfig = {
   },
 };
 
-const sentryModule = await import("@sentry/nextjs");
+// Sichere Ermittlung der mitSentryConfig-Funktion für alle Sentry-Versionen
 const withSentryConfig =
-  sentryModule.withSentryConfig || sentryModule.default?.withSentryConfig;
+  Sentry.withSentryConfig ||
+  Sentry.default?.withSentryConfig ||
+  ((config) => config);
 
 export default withSentryConfig(nextConfig, {
   org: "agencyx-9q",
