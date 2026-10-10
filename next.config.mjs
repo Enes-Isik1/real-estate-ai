@@ -1,4 +1,4 @@
-import { withSentryConfig } from "@sentry/nextjs";
+import sentryNextJs from "@sentry/nextjs";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -19,14 +19,13 @@ const nextConfig = {
   },
 };
 
-export default withSentryConfig(nextConfig, {
+export default sentryNextJs.withSentryConfig(nextConfig, {
   org: "agencyx-9q",
   project: "javascript-nextjs",
   silent: !process.env.CI,
   widenClientFileUpload: true,
   tunnelRoute: "/monitoring",
 
-  // Enterprise-Lösung: Zwingt Webpack, das ESM-Modul sauber zu externalisieren
   webpack: (config) => {
     config.externals.push({
       "@apm-js-collab/tracing-hooks": "commonjs @apm-js-collab/tracing-hooks",
