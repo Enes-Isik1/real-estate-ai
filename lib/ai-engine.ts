@@ -3,8 +3,7 @@ import { AnalysisData } from "./types/analysis";
 
 // Initialisierung mit dem klassischen, stabilen SDK
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-
+const model = genAI.getGenerativeModel({ model: "gemini-3.8-flash" });
 export async function analyzeCoreData(context: string): Promise<AnalysisData> {
   console.log("🏢 Starte Google Gemini Enterprise-Analyse für DealPilot...");
 
