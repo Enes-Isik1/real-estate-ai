@@ -43,7 +43,8 @@ interface NextActionItem {
 }
 
 interface MissingDoc {
-  title: string;
+  title?: string;
+  name?: string;
   category: "required" | "recommended" | "optional";
   reason?: string;
 }
@@ -317,17 +318,21 @@ export default function DealDetailPage() {
       .join("");
 
     const activeMissing = (deal.analysis?.missingDocuments || []).filter(
-      (d) =>
-        !resolvedDocs.includes(d.title) &&
-        !(deal.files || []).some((f) =>
-          f.toLowerCase().includes(d.title.toLowerCase().split(" ")[0]),
-        ),
+      (d) => {
+        const title = d?.title || (d as any)?.name || "";
+        return (
+          !resolvedDocs.includes(title) &&
+          !(deal.files || []).some((f) =>
+            f.toLowerCase().includes(title.toLowerCase().split(" ")[0]),
+          )
+        );
+      },
     );
 
     const missingDocsHtml = activeMissing
       .map(
         (d) =>
-          `<li><strong>[${d.category.toUpperCase()}] ${d.title}</strong> - ${d.reason || "Keine Angabe"}</li>`,
+          `<li><strong>[${(d.category || "optional").toUpperCase()}] ${d?.title || (d as any)?.name || "Unbekanntes Dokument"}</strong> - ${d.reason || "Keine Angabe"}</li>`,
       )
       .join("");
 
@@ -507,11 +512,13 @@ export default function DealDetailPage() {
 
   const rawMissingDocs = deal.analysis?.missingDocuments || [];
   const filteredMissingDocs = rawMissingDocs.filter((doc) => {
-    if (resolvedDocs.includes(doc.title)) return false;
+    // HIER kommt der sichere Fallback für den Filter hin:
+    const docTitle = doc?.title || (doc as any)?.name || "";
+    if (!docTitle || resolvedDocs.includes(docTitle)) return false;
 
     const hasMatchingFile = (deal.files || []).some((filename) => {
       const cleanFn = filename.toLowerCase();
-      const cleanDoc = doc.title.toLowerCase();
+      const cleanDoc = docTitle.toLowerCase();
       const firstWord = cleanDoc.split(" ")[0];
       return (
         cleanFn.includes(firstWord) ||
