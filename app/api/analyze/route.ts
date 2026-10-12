@@ -142,17 +142,39 @@ export async function POST(request: NextRequest) {
     const startTime = Date.now();
 
     let coreAnalysis;
-    try {
-      coreAnalysis = await analyzeCoreData(structuredContext);
-    } catch (aiError: any) {
-      console.error("🔥 KI-Modell Fehler:", aiError);
-      return NextResponse.json(
-        {
-          error:
-            "Die KI-Analyse ist fehlgeschlagen. Bitte versuchen Sie es erneut.",
-        },
-        { status: 500 },
-      );
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    while (attempts < maxAttempts) {
+      try {
+        attempts++;
+        coreAnalysis = await analyzeCoreData(structuredContext);
+        break; // Wenn erfolgreich, Schleife verlassen
+      } catch (aiError: any) {
+        console.warn(
+          `⚠️ KI-Versuch ${attempts} fehlgeschlagen:`,
+          aiError?.message || aiError,
+        );
+
+        // Prüfen ob es ein 503 oder Überlastungsfehler ist und ob wir noch Versuche haben
+        const isOverloaded =
+          aiError?.status === 503 ||
+          aiError?.message?.includes("503") ||
+          aiError?.message?.includes("overloaded");
+
+        if (attempts >= maxAttempts || !isOverloaded) {
+          if (attempts >= maxAttempts) {
+            console.error(
+              "🔥 Alle KI-Wiederholungsversuche fehlgeschlagen wegen Überlastung.",
+            );
+          }
+          throw aiError;
+        }
+
+        // 2 Sekunden warten vor dem nächsten Versuch (Exponential Backoff)
+        console.log(`⏳ Warte 2 Sekunden vor Retry ${attempts + 1}...`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
     }
 
     if (!coreAnalysis || typeof coreAnalysis.leadScore !== "number") {
