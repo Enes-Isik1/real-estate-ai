@@ -4,12 +4,11 @@ import { AnalysisData } from "./types/analysis";
 // Initialisierung des SDKs
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
-// Die professionelle Fallback-Kette: Wenn ein Modell überlastet ist (503)
-// oder veraltet/nicht gefunden (404), wechselt die Schleife automatisch zum nächsten.
+// Die professionelle, stabile Fallback-Kette für Google Gemini
 const MODEL_FALLBACK_CHAIN = [
-  "gemini-2.5-flash",
+  "gemini-1.5-flash",
+  "gemini-1.5-pro",
   "gemini-2.0-flash",
-  "gemini-3.8-flash",
 ];
 
 // Helper-Funktion für sichere Modell-Ausführung mit automatischem Failover
