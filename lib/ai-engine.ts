@@ -1,9 +1,55 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { AnalysisData } from "./types/analysis";
 
-// Initialisierung mit dem klassischen, stabilen SDK
+// Initialisierung des SDKs
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const model = genAI.getGenerativeModel({ model: "gemini-3.8-flash" });
+
+// Die professionelle Fallback-Kette: Wenn ein Modell überlastet ist (503)
+// oder veraltet/nicht gefunden (404), wechselt die Schleife automatisch zum nächsten.
+const MODEL_FALLBACK_CHAIN = [
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-1.5-flash-latest",
+];
+
+// Helper-Funktion für sichere Modell-Ausführung mit automatischem Failover
+async function executeWithModelFallback(prompt: string) {
+  let lastError: any = null;
+
+  for (const modelName of MODEL_FALLBACK_CHAIN) {
+    try {
+      console.log(`🤖 Versuche KI-Analyse mit Modell: ${modelName}`);
+      const model = genAI.getGenerativeModel({ model: modelName });
+
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.1,
+        },
+      });
+
+      const rawText = result.response.text() || "{}";
+      return JSON.parse(rawText);
+    } catch (error: any) {
+      console.warn(
+        `⚠️ Modell ${modelName} fehlgeschlagen (${error?.status || error?.message || "Unbekannter Fehler"}). Wechsle zum nächsten Modell...`,
+      );
+      lastError = error;
+      continue; // Versuche das nächste Modell in der Kette
+    }
+  }
+
+  // Wenn alle Modelle der Kette fehlgeschlagen sind
+  console.error(
+    "🔥 Alle KI-Modelle in der Fallback-Kette sind fehlgeschlagen:",
+    lastError,
+  );
+  throw new Error(
+    "Die KI-Server sind derzeit stark ausgelastet (503). Bitte versuchen Sie es in 1-2 Minuten erneut.",
+  );
+}
+
 export async function analyzeCoreData(context: string): Promise<AnalysisData> {
   console.log("🏢 Starte Google Gemini Enterprise-Analyse für DealPilot...");
 
@@ -93,21 +139,13 @@ export async function analyzeCoreData(context: string): Promise<AnalysisData> {
   `;
 
   try {
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.1,
-      },
-    });
-
-    const rawText = result.response.text() || "{}";
-    const parsed = JSON.parse(rawText);
+    const parsed = await executeWithModelFallback(prompt);
     return parsed as AnalysisData;
-  } catch (error) {
+  } catch (error: any) {
     console.error("🔥 Kritischer Fehler bei der Gemini-Analyse:", error);
     throw new Error(
-      "Die KI konnte die Dokumente nicht strukturieren. Bitte versuchen Sie es erneut.",
+      error?.message ||
+        "Die KI konnte die Dokumente nicht strukturieren. Bitte versuchen Sie es erneut.",
     );
   }
 }
@@ -126,15 +164,8 @@ export async function analyzeDeepDiveData(
   `;
 
   try {
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.1,
-      },
-    });
-
-    return JSON.parse(result.response.text() || "{}");
+    const parsed = await executeWithModelFallback(prompt);
+    return parsed as AnalysisData;
   } catch (e) {
     console.error("🔥 Fehler beim Gemini Deep Dive:", e);
     throw new Error("Fehler bei der tiefgehenden Dokumentenanalyse.");
