@@ -46,7 +46,13 @@ export default async function DealsPage() {
     console.error("Enterprise Audit Error [Deals Fetch]:", error.message);
   }
 
-  const safeDeals: Deal[] = deals || [];
+  const safeDeals: Deal[] = (deals || []).map((deal) => ({
+    id: deal.id,
+    title: deal.title || "Unbenanntes Immobilien-Portfolio",
+    created_at: deal.created_at || new Date().toISOString(),
+    status: deal.status || "aktiv",
+    risk_level: deal.risk_level || "normal",
+  }));
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8">
