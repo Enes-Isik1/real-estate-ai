@@ -9,7 +9,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const MODEL_FALLBACK_CHAIN = [
   "gemini-2.5-flash",
   "gemini-2.0-flash",
-  "gemini-1.5-flash-latest",
+  "gemini-3.8-flash",
 ];
 
 // Helper-Funktion für sichere Modell-Ausführung mit automatischem Failover
