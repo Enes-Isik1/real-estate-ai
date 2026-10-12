@@ -181,7 +181,11 @@ function AnalyzeContent({ dealId }: { dealId?: string }) {
 
         <div className="lg:col-span-4 space-y-6">
           <ScoreBreakdownCard
-            score={analysis?.leadScore || 72}
+            score={
+              analysis?.leadScore ??
+              uploadedData?.property?.decisionCenter?.score ??
+              50
+            }
             breakdown={analysis?.scoringBreakdown || []}
           />
           <AuditCard />
@@ -191,14 +195,17 @@ function AnalyzeContent({ dealId }: { dealId?: string }) {
               <FileWarning className="w-4 h-4 text-rose-500" /> Missing Docs
             </h3>
             <div className="grid grid-cols-2 gap-2.5">
-              {missingDocuments.map((d: any, i: number) => (
-                <div
-                  key={i}
-                  className="p-2.5 bg-rose-50/80 border border-rose-100 rounded-2xl text-xs font-bold text-rose-700"
-                >
-                  {d.name}
-                </div>
-              ))}
+              {missingDocuments.map((d: any, i: number) => {
+                const docTitle = d?.title || d?.name || "Unbekanntes Dokument";
+                return (
+                  <div
+                    key={i}
+                    className="p-2.5 bg-rose-50/80 border border-rose-100 rounded-2xl text-xs font-bold text-rose-700"
+                  >
+                    {docTitle}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
