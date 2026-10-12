@@ -512,14 +512,13 @@ export default function DealDetailPage() {
 
   const rawMissingDocs = deal.analysis?.missingDocuments || [];
   const filteredMissingDocs = rawMissingDocs.filter((doc) => {
-    // HIER kommt der sichere Fallback für den Filter hin:
     const docTitle = doc?.title || (doc as any)?.name || "";
     if (!docTitle || resolvedDocs.includes(docTitle)) return false;
 
     const hasMatchingFile = (deal.files || []).some((filename) => {
-      const cleanFn = filename.toLowerCase();
+      const cleanFn = (filename || "").toLowerCase();
       const cleanDoc = docTitle.toLowerCase();
-      const firstWord = cleanDoc.split(" ")[0];
+      const firstWord = cleanDoc.split(" ")[0] || "";
       return (
         cleanFn.includes(firstWord) ||
         cleanDoc.includes(cleanFn.replace(/\.[^/.]+$/, ""))
