@@ -4,11 +4,11 @@ const API_KEY = process.env.GEMINI_API_KEY;
 const MODEL_NAME = "gemini-3.8-flash";
 
 /**
- * Intelligenter Smart-Filter: Filtert irrelevantes Füllmaterial aus großen PDFs heraus
- * und behält nur kaufmännisch und rechtlich relevante Passagen (Keywords).
+ * Ultrakompakter Smart-Filter: Reduziert das Dokument aggressiv auf max. 10.000 Zeichen,
+ * damit Vercel (60s Limit) niemals erreicht wird.
  */
 function smartFilterDocumentContext(rawText: string): string {
-  if (rawText.length <= 20000) return rawText;
+  if (rawText.length <= 10000) return rawText;
 
   const lines = rawText.split("\n");
   const relevantKeywords = [
@@ -40,9 +40,9 @@ function smartFilterDocumentContext(rawText: string): string {
   });
 
   const result =
-    filteredLines.length > 100
-      ? filteredLines.join("\n")
-      : rawText.substring(0, 20000);
+    filteredLines.length > 50
+      ? filteredLines.join("\n").substring(0, 10000)
+      : rawText.substring(0, 10000);
 
   console.log(
     `✂️ Smart-Filter: Dokument von ${rawText.length} auf ${result.length} Zeichen komprimiert.`,
@@ -53,7 +53,7 @@ function smartFilterDocumentContext(rawText: string): string {
 async function callGeminiWithRetry(
   prompt: string,
   systemInstruction?: string,
-  maxRetries = 3,
+  maxRetries = 2, // Auf 2 Versuche reduziert, um Vercel-Limits einzuhalten
 ): Promise<any> {
   if (!API_KEY) {
     throw new Error(
@@ -84,8 +84,9 @@ async function callGeminiWithRetry(
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
+      // Strenger 25s Timeout pro Versuch, damit Vercel (60s) niemals voll läuft
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 45000);
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
 
       const response = await fetch(url, {
         method: "POST",
@@ -98,9 +99,9 @@ async function callGeminiWithRetry(
 
       if (response.status === 503 && attempt < maxRetries) {
         console.warn(
-          `⚠️ Google Server überlastet (503). Versuch ${attempt}/${maxRetries}. Warte 3s...`,
+          `⚠️ Google Server überlastet (503). Versuch ${attempt}/${maxRetries}. Kurzer Retry...`,
         );
-        await new Promise((res) => setTimeout(res, 3000 * attempt));
+        await new Promise((res) => setTimeout(res, 1000));
         continue;
       }
 
@@ -122,9 +123,9 @@ async function callGeminiWithRetry(
         throw error;
       }
       console.warn(
-        `⚠️ Versuch ${attempt} fehlgeschlagen (${error.message}). Starte Retry...`,
+        `⚠️ Versuch ${attempt} fehlgeschlagen (${error.message}). Starte sofortigen Retry...`,
       );
-      await new Promise((res) => setTimeout(res, 2000 * attempt));
+      await new Promise((res) => setTimeout(res, 1000));
     }
   }
 }
