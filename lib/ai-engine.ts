@@ -1,188 +1,194 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { AnalysisData } from "./types/analysis";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const API_KEY = process.env.GEMINI_API_KEY;
+const API_BASE_URL = "https://generativelanguage.googleapis.com/v1/models";
 
-// Exakte, von der Gemini API v1beta unterstützten Modell-Bezeichnungen
-const MODEL_FALLBACK_CHAIN = [
-  "gemini-2.0-flash",
-  "gemini-2.0-flash-lite",
-  "gemini-1.5-flash",
-];
+// Einziges stabiles Production-Modell + Ausweichmodell auf v1 API
+const PRIMARY_MODEL = "gemini-1.5-flash";
+const FALLBACK_MODEL = "gemini-1.5-pro";
 
-async function executeWithEnterpriseResilience(prompt: string): Promise<any> {
+interface CallApiOptions {
+  model: string;
+  prompt: string;
+  systemInstruction?: string;
+  timeoutMs?: number;
+}
+
+/**
+ * Reiner Native Fetch direkt gegen die stabile Google GenAI v1 API.
+ * Umgeht alle SDK-Deprecations und v1beta-Routing-Fehler vollständig.
+ */
+async function callGeminiApiDirect({
+  model,
+  prompt,
+  systemInstruction,
+  timeoutMs = 45000,
+}: CallApiOptions): Promise<any> {
+  if (!API_KEY) {
+    throw new Error(
+      "GEMINI_API_KEY ist in den Umgebungsvariablen nicht gesetzt.",
+    );
+  }
+
+  const url = `${API_BASE_URL}/${model}:generateContent?key=${API_KEY}`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  const payload: Record<string, any> = {
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: prompt }],
+      },
+    ],
+    generationConfig: {
+      responseMimeType: "application/json",
+      temperature: 0.1,
+    },
+  };
+
+  if (systemInstruction) {
+    payload.systemInstruction = {
+      parts: [{ text: systemInstruction }],
+    };
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      const err = new Error(`Gemini API HTTP ${response.status}: ${errorBody}`);
+      (err as any).status = response.status;
+      throw err;
+    }
+
+    const data = await response.json();
+    const candidateText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!candidateText) {
+      throw new Error("Leere Antwort von der Gemini API erhalten.");
+    }
+
+    return JSON.parse(candidateText);
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    if (err.name === "AbortError") {
+      const timeoutErr = new Error(
+        `Request Timeout (${timeoutMs}ms) für Modell ${model}`,
+      );
+      (timeoutErr as any).status = 504;
+      throw timeoutErr;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Enterprise Resilience Runner:
+ * Versucht Primärmodell mit Exponential Backoff (3 Versuche), schaltet erst bei Dauerfehler auf Fallbackmodell.
+ */
+async function executeResilientAiTask(
+  prompt: string,
+  systemInstruction: string,
+): Promise<any> {
+  const modelsToTry = [PRIMARY_MODEL, FALLBACK_MODEL];
   let lastError: any = null;
 
-  for (const modelName of MODEL_FALLBACK_CHAIN) {
-    let attempts = 0;
+  for (const model of modelsToTry) {
     const maxRetries = 2;
-
-    while (attempts < maxRetries) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        attempts++;
         console.log(
-          `🤖 [Enterprise AI] Versuche Modell '${modelName}' (Versuch ${attempts}/${maxRetries})...`,
+          `🤖 [AI Engine] Ausführung gestartet (Modell: ${model}, Versuch: ${attempt}/${maxRetries})...`,
         );
-
-        const model = genAI.getGenerativeModel({ model: modelName });
-
-        const result = await model.generateContent({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0.1,
-          },
-        });
-
-        const rawText = result.response.text() || "{}";
-        return JSON.parse(rawText);
+        return await callGeminiApiDirect({ model, prompt, systemInstruction });
       } catch (error: any) {
         lastError = error;
+        const status = error?.status;
 
-        const errMessage = String(error?.message || "");
-        const is404 =
-          error?.status === 404 ||
-          errMessage.includes("404") ||
-          errMessage.includes("not found");
-        const is503 =
-          error?.status === 503 ||
-          errMessage.includes("503") ||
-          errMessage.includes("overloaded") ||
-          errMessage.includes("high demand");
+        console.warn(
+          `⚠️ [AI Engine] Modell '${model}' fehlgeschlagen (Status ${status}):`,
+          error.message,
+        );
 
-        console.warn(`⚠️ Modell '${modelName}' fehlgeschlagen: ${errMessage}`);
-
-        // Bei 404 (Modellname existiert in v1beta nicht) sofort zum nächsten Modell springen
-        if (is404) {
+        // Bei 404 (Modell im Endpoint nicht verankert): Sofort zum nächsten Modell wechseln
+        if (status === 404) {
           break;
         }
 
-        // Bei 503 (Server ausgelastet) kurz warten und Retry im selben Modell versuchen
-        if (is503 && attempts < maxRetries) {
+        // Bei 503 (Overload) oder 429 (Rate Limit): Kurzes Backoff vor Retry
+        if (
+          (status === 503 || status === 429 || status === 504) &&
+          attempt < maxRetries
+        ) {
+          const delay = attempt * 2000;
           console.log(
-            `⏳ Server überlastet (503). Warte 1.5s vor erneutem Versuch mit '${modelName}'...`,
+            `⏳ [AI Engine] Ratelimit/Overload (${status}). Warte ${delay}ms...`,
           );
-          await new Promise((resolve) => setTimeout(resolve, 1500));
+          await new Promise((res) => setTimeout(res, delay));
           continue;
         }
 
+        // Andere Fehler: Modell wechseln
         break;
       }
     }
   }
 
   console.error(
-    "🔥 KRITISCH: Alle Modelle in der Enterprise-Kette sind fehlgeschlagen.",
+    "🔥 [AI Engine] Alle KI-Modelle & Retries fehlgeschlagen.",
     lastError,
   );
   throw new Error(
-    "Die KI-Server sind derzeit stark ausgelastet oder nicht erreichbar. Bitte versuchen Sie es in wenigen Augenblicken erneut.",
+    "Der KI-Analysedienst ist derzeit nicht erreichbar. Bitte versuchen Sie es in wenigen Sekunden erneut.",
   );
 }
 
 export async function analyzeCoreData(context: string): Promise<AnalysisData> {
-  console.log("🏢 Starte Google Gemini Enterprise Core-Analyse...");
+  const systemInstruction = `Du bist ein deutscher Sachverständiger, WEG-Recht-Experte und Senior Real Estate Analyst.
+Analysiere Immobilienunterlagen präzise.
+Antworte AUSSCHLIESSLICH im validen JSON-Format gemäß Vorgabe.`;
 
   const prompt = `
-    Du bist ein kompromissloser deutscher Sachverständiger, WEG-Recht-Experte und Senior Real Estate Analyst. 
-    Analysiere die vorliegenden Dokumente (Exposé, Teilungserklärung, WEG-Protokolle, Wirtschaftsplan, Grundbuch etc.) mit absoluter juristischer und kaufmännischer Präzision.
+Analysiere die folgenden Dokumente und gib ein striktes JSON-Objekt zurück.
 
-    WICHTIG ZU DEN QUELLEN (EVIDENCE):
-    Jedes Risiko und jeder positive Befund MUSS einen echten Beleg aus dem übergebenen Text enthalten. Erfinde NIEMALS Seitenzahlen oder Textsnippets!
+JSON Schema:
+{
+  "leadScore": number (0-100),
+  "executiveSummary": string,
+  "confidence": number (0.0-1.0),
+  "overallRecommendation": string,
+  "verificationRequired": boolean,
+  "topRisks": Array<{ id: string, severity: string, title: string, whyItMatters: string, confidence: number }>,
+  "positiveFindings": Array<{ title: string, description: string }>,
+  "missingDocuments": Array<{ name: string, required: boolean }>,
+  "negotiationPoints": Array<{ title: string, argument: string, leverageScore: number }>,
+  "sellerQuestions": Array<{ question: string, context: string }>,
+  "timeline": Array<{ event: string, date: string }>,
+  "crossDocumentConflicts": Array<{ title: string, description: string, severity: string }>
+}
 
-    SCORING-LOGIK:
-    Ermittle einen Deal-Score von 0 bis 100 Punkten ('leadScore'). 
-    - Starte bei einem Basiswert von 100 Punkten.
-    - Ziehe Punkte ab für: Fehlende Pflichtdokumente, unklare Instandhaltungsrücklagen, Widersprüche oder finanzielle Auffälligkeiten.
-    - Addiere Punkte für: Vollständige Unterlagen, gesunde Rücklagen.
+DOKUMENTE:
+${context}
+`;
 
-    Du MUSST ein striktes JSON-Objekt zurückgeben, das exakt diesem TypeScript-Schema entspricht:
-    {
-      "leadScore": (Zahl von 0 bis 100),
-      "executiveSummary": "Kaufmännische Zusammenfassung auf den Punkt gebracht (2-3 Sätze)",
-      "confidence": 0.95,
-      "overallRecommendation": "Harte, glasklare Handlungsempfehlung für den Makler auf Deutsch",
-      "verificationRequired": false,
-      "topRisks": [
-        {
-          "id": "1",
-          "severity": "High",
-          "title": "Prägnanter Risikotitel",
-          "whyItMatters": "Konkrete finanzielle oder rechtliche Auswirkung",
-          "source": {
-            "documentType": "Echter Name des Dokuments",
-            "pageNumber": 1,
-            "snippet": "Exakter Originaltextauszug als Beleg"
-          },
-          "confidence": 0.9
-        }
-      ],
-      "positiveFindings": [
-        {
-          "title": "Positiver Aspekt",
-          "description": "Erklärung",
-          "source": {
-            "documentType": "Dokument",
-            "pageNumber": 1,
-            "snippet": "Belegtext"
-          }
-        }
-      ],
-      "missingDocuments": [
-        {
-          "name": "Name des fehlenden Dokuments",
-          "required": true
-        }
-      ],
-      "negotiationPoints": [
-        {
-          "title": "Verhandlungspunkt",
-          "argument": "Argument für den Makler",
-          "leverageScore": 85
-        }
-      ],
-      "sellerQuestions": [
-        {
-          "question": "Konkrete Frage",
-          "context": "Hintergrund"
-        }
-      ],
-      "timeline": [
-        {
-          "event": "Ereignisbeschreibung",
-          "date": "Zeitraum"
-        }
-      ],
-      "crossDocumentConflicts": [
-        {
-          "title": "Widerspruch Titel",
-          "description": "Beschreibung",
-          "severity": "High",
-          "sourceA": { "documentType": "A", "pageNumber": 1, "snippet": "A" },
-          "sourceB": { "documentType": "B", "pageNumber": 1, "snippet": "B" }
-        }
-      ]
-    }
-    
-    HIER SIND DIE GESAMTEN DOKUMENTE:
-    ${context}
-  `;
-
-  return await executeWithEnterpriseResilience(prompt);
+  return await executeResilientAiTask(prompt, systemInstruction);
 }
 
 export async function analyzeDeepDiveData(
   context: string,
   schemaString: string,
 ): Promise<AnalysisData> {
-  const prompt = `
-    Du bist ein Senior Real Estate Analyst. Führe eine vollständige Due Diligence durch.
-    Gib AUSSCHLIESSLICH reines JSON zurück gemäß diesem Schema: 
-    ${schemaString}.
-    
-    HIER SIND DIE DOKUMENTE:
-    ${context}
-  `;
+  const systemInstruction = `Du bist ein Senior Real Estate Analyst. Gib ausschließlich reines JSON gemäß vorgegebenem Schema zurück.`;
+  const prompt = `Schema: ${schemaString}\n\nDokumente:\n${context}`;
 
-  return await executeWithEnterpriseResilience(prompt);
+  return await executeResilientAiTask(prompt, systemInstruction);
 }
