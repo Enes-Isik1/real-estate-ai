@@ -3,6 +3,53 @@ import { AnalysisData } from "./types/analysis";
 const API_KEY = process.env.GEMINI_API_KEY;
 const MODEL_NAME = "gemini-3.8-flash";
 
+/**
+ * Intelligenter Smart-Filter: Filtert irrelevantes Füllmaterial aus großen PDFs heraus
+ * und behält nur kaufmännisch und rechtlich relevante Passagen (Keywords).
+ */
+function smartFilterDocumentContext(rawText: string): string {
+  if (rawText.length <= 20000) return rawText;
+
+  const lines = rawText.split("\n");
+  const relevantKeywords = [
+    "rücklage",
+    "instandhaltung",
+    "wirtschaftsplan",
+    "beschluss",
+    "hausgeld",
+    "sondernutzung",
+    "teilung",
+    "schaden",
+    "sanierung",
+    "aufteilung",
+    "euro",
+    "€",
+    "stimmen",
+    "genehmigt",
+    "ablehnung",
+    "eigentümer",
+    "WEG",
+    "haftung",
+    "miete",
+    "rendite",
+  ];
+
+  const filteredLines = lines.filter((line) => {
+    const lower = line.toLowerCase();
+    return relevantKeywords.some((keyword) => lower.includes(keyword));
+  });
+
+  const result =
+    filteredLines.length > 100
+      ? filteredLines.join("\n")
+      : rawText.substring(0, 20000);
+
+  console.log(
+    `✂️ Smart-Filter: Dokument von ${rawText.length} auf ${result.length} Zeichen komprimiert.`,
+  );
+  return result;
+}
+
 async function callGeminiWithRetry(
   prompt: string,
   systemInstruction?: string,
@@ -37,7 +84,6 @@ async function callGeminiWithRetry(
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      // 45s Timeout, damit Vercel (60s) nicht hart abbricht, sondern sauber abgefangen wird
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 45000);
 
@@ -50,7 +96,6 @@ async function callGeminiWithRetry(
 
       clearTimeout(timeoutId);
 
-      // Wenn Google 503 (Overload) meldet und wir noch Versuche haben -> Warten und retry
       if (response.status === 503 && attempt < maxRetries) {
         console.warn(
           `⚠️ Google Server überlastet (503). Versuch ${attempt}/${maxRetries}. Warte 3s...`,
@@ -85,35 +130,19 @@ async function callGeminiWithRetry(
 }
 
 export async function analyzeCoreData(context: string): Promise<AnalysisData> {
-  console.log("🏢 Starte DealPilot Core-Analyse mit gemini-3.8-flash...");
+  console.log("🏢 Starte DealPilot Core-Analyse...");
 
-  // Text auf 20.000 Zeichen begrenzen, um den 60s-Vercel-Timeout bei Google-Lastspitzen auszuschließen
-  const safeContext =
-    context.length > 20000
-      ? context.substring(0, 20000) +
-        "\n\n[... Text aus Performancegründen gekürzt ...]"
-      : context;
+  const safeContext = smartFilterDocumentContext(context);
 
-  const systemInstruction = `Du bist ein deutscher Sachverständiger, WEG-Recht-Experte und Senior Real Estate Analyst. Analysiere Immobilienunterlagen präzise und antworte AUSSCHLIESSLICH im validen JSON-Format gemäß Vorgabe.`;
+  const systemInstruction = `Du bist ein deutscher Sachverständiger und WEG-Recht-Experte. Analysiere präzise und antworte AUSSCHLIESSLICH im validen JSON-Format.`;
 
   const prompt = `
-    Du bist ein kompromissloser deutscher Sachverständiger, WEG-Recht-Experte und Senior Real Estate Analyst. 
-    Analysiere die vorliegenden Dokumente mit absoluter juristischer und kaufmännischer Präzision.
-
-    WICHTIG ZU DEN QUELLEN (EVIDENCE):
-    Jedes Risiko und jeder positive Befund MUSS einen echten Beleg aus dem übergebenen Text enthalten. Erfinde NIEMALS Seitenzahlen oder Textsnippets!
-
-    SCORING-LOGIK:
-    Ermittle einen Deal-Score von 0 bis 100 Punkten ('leadScore'). 
-    - Starte bei einem Basiswert von 100 Punkten.
-    - Ziehe Punkte ab für: Fehlende Pflichtdokumente, unklare Instandhaltungsrücklagen, Widersprüche oder finanzielle Auffälligkeiten.
-
-    Du MUSST ein striktes JSON-Objekt zurückgeben, das exakt diesem Schema entspricht:
+    Analysiere die folgenden Dokumente und gib ein striktes JSON-Objekt zurück, das exakt diesem Schema entspricht:
     {
       "leadScore": 85,
-      "executiveSummary": "Kaufmännische Zusammenfassung (2-3 Sätze)",
+      "executiveSummary": "Zusammenfassung (2-3 Sätze)",
       "confidence": 0.95,
-      "overallRecommendation": "Harte Handlungsempfehlung",
+      "overallRecommendation": "Handlungsempfehlung",
       "verificationRequired": false,
       "topRisks": [],
       "positiveFindings": [],
@@ -137,10 +166,7 @@ export async function analyzeDeepDiveData(
 ): Promise<AnalysisData> {
   console.log("🔍 Starte Deep Dive Analyse...");
 
-  const safeContext =
-    context.length > 20000
-      ? context.substring(0, 20000) + "\n\n[... Text gekürzt ...]"
-      : context;
+  const safeContext = smartFilterDocumentContext(context);
 
   const systemInstruction = `Du bist ein Senior Real Estate Analyst. Führe eine vollständige Due Diligence durch und gib AUSSCHLIESSLICH reines JSON zurück.`;
   const prompt = `Schema: ${schemaString}\n\nDokumente:\n${safeContext}`;
