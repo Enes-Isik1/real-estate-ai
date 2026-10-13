@@ -1,81 +1,75 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { AnalysisData } from "./types/analysis";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const API_KEY = process.env.GEMINI_API_KEY;
+// Das von Google für deinen Account verbindlich vorgeschriebene Produktionsmodell
+const MODEL_NAME = "gemini-3.8-flash";
 
-// Das von Google für diesen API-Key exakt vorgeschriebene Produktionsmodell
-const MODEL_FALLBACK_CHAIN = ["gemini-3.8-flash"];
-
-async function executeWithEnterpriseResilience(prompt: string): Promise<any> {
-  let lastError: any = null;
-
-  for (const modelName of MODEL_FALLBACK_CHAIN) {
-    let attempts = 0;
-    const maxRetries = 2;
-
-    while (attempts < maxRetries) {
-      try {
-        attempts++;
-        console.log(
-          `🤖 [Enterprise AI] Versuche Modell '${modelName}' (Versuch ${attempts}/${maxRetries})...`,
-        );
-
-        const model = genAI.getGenerativeModel({ model: modelName });
-
-        const result = await model.generateContent({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0.1,
-          },
-        });
-
-        const rawText = result.response.text() || "{}";
-        return JSON.parse(rawText);
-      } catch (error: any) {
-        lastError = error;
-
-        const errMessage = String(error?.message || "");
-        const is404 =
-          error?.status === 404 ||
-          errMessage.includes("404") ||
-          errMessage.includes("not found");
-        const is503 =
-          error?.status === 503 ||
-          errMessage.includes("503") ||
-          errMessage.includes("overloaded") ||
-          errMessage.includes("high demand");
-
-        console.warn(`⚠️ Modell '${modelName}' fehlgeschlagen: ${errMessage}`);
-
-        if (is404) {
-          break;
-        }
-
-        if (is503 && attempts < maxRetries) {
-          console.log(
-            `⏳ Server überlastet (503). Warte 1.5s vor erneutem Versuch mit '${modelName}'...`,
-          );
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-          continue;
-        }
-
-        break;
-      }
-    }
+async function callGeminiDirect(
+  prompt: string,
+  systemInstruction?: string,
+): Promise<any> {
+  if (!API_KEY) {
+    throw new Error(
+      "GEMINI_API_KEY ist in den Umgebungsvariablen nicht gesetzt.",
+    );
   }
 
-  console.error(
-    "🔥 KRITISCH: Alle Modelle in der Enterprise-Kette sind fehlgeschlagen.",
-    lastError,
-  );
-  throw new Error(
-    "Die KI-Server sind derzeit stark ausgelastet oder nicht erreichbar. Bitte versuchen Sie es in wenigen Augenblicken erneut.",
-  );
+  const url = `https://generativelanguage.googleapis.com/v1/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
+
+  const payload: Record<string, any> = {
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: prompt }],
+      },
+    ],
+    generationConfig: {
+      responseMimeType: "application/json",
+      temperature: 0.1,
+    },
+  };
+
+  if (systemInstruction) {
+    payload.systemInstruction = {
+      parts: [{ text: systemInstruction }],
+    };
+  }
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error(`🔥 Gemini API Fehler (HTTP ${response.status}):`, errorBody);
+    throw new Error(
+      `Die KI-Schnittstelle hat mit Status ${response.status} geantwortet: ${errorBody}`,
+    );
+  }
+
+  const data = await response.json();
+  const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+  if (!rawText) {
+    throw new Error("Die KI hat eine leere Antwort zurückgegeben.");
+  }
+
+  return JSON.parse(rawText);
 }
 
 export async function analyzeCoreData(context: string): Promise<AnalysisData> {
-  console.log("🏢 Starte Google Gemini Enterprise Core-Analyse...");
+  console.log("🏢 Starte DealPilot Core-Analyse mit gemini-3.8-flash...");
+
+  // Begrenze den Text auf 30.000 Zeichen, um Vercel-Timeouts (60s) absolut sicher zu verhindern
+  const safeContext =
+    context.length > 30000
+      ? context.substring(0, 30000) +
+        "\n\n[... Text aus Performancegründen gekürzt ...]"
+      : context;
+
+  const systemInstruction = `Du bist ein deutscher Sachverständiger, WEG-Recht-Experte und Senior Real Estate Analyst. Analysiere Immobilienunterlagen präzise und antworte AUSSCHLIESSLICH im validen JSON-Format gemäß Vorgabe.`;
 
   const prompt = `
     Du bist ein kompromissloser deutscher Sachverständiger, WEG-Recht-Experte und Senior Real Estate Analyst. 
@@ -159,24 +153,25 @@ export async function analyzeCoreData(context: string): Promise<AnalysisData> {
     }
     
     HIER SIND DIE GESAMTEN DOKUMENTE:
-    ${context}
+    ${safeContext}
   `;
 
-  return await executeWithEnterpriseResilience(prompt);
+  return await callGeminiDirect(prompt, systemInstruction);
 }
 
 export async function analyzeDeepDiveData(
   context: string,
   schemaString: string,
 ): Promise<AnalysisData> {
-  const prompt = `
-    Du bist ein Senior Real Estate Analyst. Führe eine vollständige Due Diligence durch.
-    Gib AUSSCHLIESSLICH reines JSON zurück gemäß diesem Schema: 
-    ${schemaString}.
-    
-    HIER SIND DIE DOKUMENTE:
-    ${context}
-  `;
+  console.log("🔍 Starte Deep Dive Analyse...");
 
-  return await executeWithEnterpriseResilience(prompt);
+  const safeContext =
+    context.length > 30000
+      ? context.substring(0, 30000) + "\n\n[... Text gekürzt ...]"
+      : context;
+
+  const systemInstruction = `Du bist ein Senior Real Estate Analyst. Führe eine vollständige Due Diligence durch und gib AUSSCHLIESSLICH reines JSON zurück.`;
+  const prompt = `Schema: ${schemaString}\n\nDokumente:\n${safeContext}`;
+
+  return await callGeminiDirect(prompt, systemInstruction);
 }
