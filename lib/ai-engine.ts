@@ -4,8 +4,8 @@ const API_KEY = process.env.GEMINI_API_KEY;
 const MODEL_NAME = "gemini-3.8-flash";
 
 /**
- * Ultrakompakter Smart-Filter: Reduziert das Dokument aggressiv auf max. 10.000 Zeichen,
- * damit Vercel (60s Limit) niemals erreicht wird.
+ * Smart-Filter: Reduziert das Dokument auf max. 10.000 Zeichen,
+ * um die Rechenzeit auf ein Minimum zu reduzieren.
  */
 function smartFilterDocumentContext(rawText: string): string {
   if (rawText.length <= 10000) return rawText;
@@ -53,7 +53,7 @@ function smartFilterDocumentContext(rawText: string): string {
 async function callGeminiWithRetry(
   prompt: string,
   systemInstruction?: string,
-  maxRetries = 2, // Auf 2 Versuche reduziert, um Vercel-Limits einzuhalten
+  maxRetries = 3,
 ): Promise<any> {
   if (!API_KEY) {
     throw new Error(
@@ -84,24 +84,21 @@ async function callGeminiWithRetry(
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      // Strenger 25s Timeout pro Versuch, damit Vercel (60s) niemals voll läuft
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 25000);
+      console.log(
+        `🤖 [AI Engine] Sende Request an Gemini (Versuch ${attempt}/${maxRetries})...`,
+      );
 
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-        signal: controller.signal,
       });
-
-      clearTimeout(timeoutId);
 
       if (response.status === 503 && attempt < maxRetries) {
         console.warn(
-          `⚠️ Google Server überlastet (503). Versuch ${attempt}/${maxRetries}. Kurzer Retry...`,
+          `⚠️ Google Server überlastet (503). Versuch ${attempt}/${maxRetries}. Warte 4s...`,
         );
-        await new Promise((res) => setTimeout(res, 1000));
+        await new Promise((res) => setTimeout(res, 4000 * attempt));
         continue;
       }
 
@@ -123,9 +120,9 @@ async function callGeminiWithRetry(
         throw error;
       }
       console.warn(
-        `⚠️ Versuch ${attempt} fehlgeschlagen (${error.message}). Starte sofortigen Retry...`,
+        `⚠️ Versuch ${attempt} fehlgeschlagen (${error.message}). Starte Retry...`,
       );
-      await new Promise((res) => setTimeout(res, 1000));
+      await new Promise((res) => setTimeout(res, 3000 * attempt));
     }
   }
 }
