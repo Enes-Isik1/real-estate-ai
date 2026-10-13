@@ -1,102 +1,182 @@
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { AnalysisData } from "./types/analysis";
 
-const API_KEY = process.env.GEMINI_API_KEY;
-// Das einzige verbindliche, stabile Produktionsmodell
-const MODEL_NAME = "gemini-2.5-flash";
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
-async function callGemini(
-  prompt: string,
-  systemInstruction?: string,
-): Promise<any> {
-  if (!API_KEY) {
-    throw new Error(
-      "GEMINI_API_KEY ist in den Umgebungsvariablen nicht gesetzt.",
-    );
+// Das von Google für diesen API-Key exakt vorgeschriebene Produktionsmodell
+const MODEL_FALLBACK_CHAIN = ["gemini-3.8-flash"];
+
+async function executeWithEnterpriseResilience(prompt: string): Promise<any> {
+  let lastError: any = null;
+
+  for (const modelName of MODEL_FALLBACK_CHAIN) {
+    let attempts = 0;
+    const maxRetries = 2;
+
+    while (attempts < maxRetries) {
+      try {
+        attempts++;
+        console.log(
+          `🤖 [Enterprise AI] Versuche Modell '${modelName}' (Versuch ${attempts}/${maxRetries})...`,
+        );
+
+        const model = genAI.getGenerativeModel({ model: modelName });
+
+        const result = await model.generateContent({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.1,
+          },
+        });
+
+        const rawText = result.response.text() || "{}";
+        return JSON.parse(rawText);
+      } catch (error: any) {
+        lastError = error;
+
+        const errMessage = String(error?.message || "");
+        const is404 =
+          error?.status === 404 ||
+          errMessage.includes("404") ||
+          errMessage.includes("not found");
+        const is503 =
+          error?.status === 503 ||
+          errMessage.includes("503") ||
+          errMessage.includes("overloaded") ||
+          errMessage.includes("high demand");
+
+        console.warn(`⚠️ Modell '${modelName}' fehlgeschlagen: ${errMessage}`);
+
+        if (is404) {
+          break;
+        }
+
+        if (is503 && attempts < maxRetries) {
+          console.log(
+            `⏳ Server überlastet (503). Warte 1.5s vor erneutem Versuch mit '${modelName}'...`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          continue;
+        }
+
+        break;
+      }
+    }
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
-
-  const payload: Record<string, any> = {
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: prompt }],
-      },
-    ],
-    generationConfig: {
-      responseMimeType: "application/json",
-      temperature: 0.1,
-    },
-  };
-
-  if (systemInstruction) {
-    payload.systemInstruction = {
-      parts: [{ text: systemInstruction }],
-    };
-  }
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error(`🔥 Gemini API Fehler (HTTP ${response.status}):`, errorBody);
-    throw new Error(
-      `Die KI-Schnittstelle hat mit Status ${response.status} geantwortet: ${errorBody}`,
-    );
-  }
-
-  const data = await response.json();
-  const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-  if (!rawText) {
-    throw new Error("Die KI hat eine leere Antwort zurückgegeben.");
-  }
-
-  return JSON.parse(rawText);
+  console.error(
+    "🔥 KRITISCH: Alle Modelle in der Enterprise-Kette sind fehlgeschlagen.",
+    lastError,
+  );
+  throw new Error(
+    "Die KI-Server sind derzeit stark ausgelastet oder nicht erreichbar. Bitte versuchen Sie es in wenigen Augenblicken erneut.",
+  );
 }
 
 export async function analyzeCoreData(context: string): Promise<AnalysisData> {
-  console.log("🏢 Starte DealPilot Core-Analyse mit gemini-2.5-flash...");
-
-  const systemInstruction = `Du bist ein deutscher Sachverständiger, WEG-Recht-Experte und Senior Real Estate Analyst. Analysiere Immobilienunterlagen präzise und antworte AUSSCHLIESSLICH im validen JSON-Format gemäß Vorgabe.`;
+  console.log("🏢 Starte Google Gemini Enterprise Core-Analyse...");
 
   const prompt = `
-Analysiere die folgenden Dokumente und gib ein striktes JSON-Objekt zurück, das exakt diesem Schema entspricht:
+    Du bist ein kompromissloser deutscher Sachverständiger, WEG-Recht-Experte und Senior Real Estate Analyst. 
+    Analysiere die vorliegenden Dokumente (Exposé, Teilungserklärung, WEG-Protokolle, Wirtschaftsplan, Grundbuch etc.) mit absoluter juristischer und kaufmännischer Präzision.
 
-{
-  "leadScore": 85,
-  "executiveSummary": "Kaufmännische Zusammenfassung auf den Punkt gebracht (2-3 Sätze)",
-  "confidence": 0.95,
-  "overallRecommendation": "Harte, glasklare Handlungsempfehlung für den Makler auf Deutsch",
-  "verificationRequired": false,
-  "topRisks": [],
-  "positiveFindings": [],
-  "missingDocuments": [],
-  "negotiationPoints": [],
-  "sellerQuestions": [],
-  "timeline": [],
-  "crossDocumentConflicts": []
-}
+    WICHTIG ZU DEN QUELLEN (EVIDENCE):
+    Jedes Risiko und jeder positive Befund MUSS einen echten Beleg aus dem übergebenen Text enthalten. Erfinde NIEMALS Seitenzahlen oder Textsnippets!
 
-DOKUMENTE:
-${context}
-`;
+    SCORING-LOGIK:
+    Ermittle einen Deal-Score von 0 bis 100 Punkten ('leadScore'). 
+    - Starte bei einem Basiswert von 100 Punkten.
+    - Ziehe Punkte ab für: Fehlende Pflichtdokumente, unklare Instandhaltungsrücklagen, Widersprüche oder finanzielle Auffälligkeiten.
+    - Addiere Punkte für: Vollständige Unterlagen, gesunde Rücklagen.
 
-  return await callGemini(prompt, systemInstruction);
+    Du MUSST ein striktes JSON-Objekt zurückgeben, das exakt diesem TypeScript-Schema entspricht:
+    {
+      "leadScore": (Zahl von 0 bis 100),
+      "executiveSummary": "Kaufmännische Zusammenfassung auf den Punkt gebracht (2-3 Sätze)",
+      "confidence": 0.95,
+      "overallRecommendation": "Harte, glasklare Handlungsempfehlung für den Makler auf Deutsch",
+      "verificationRequired": false,
+      "topRisks": [
+        {
+          "id": "1",
+          "severity": "High",
+          "title": "Prägnanter Risikotitel",
+          "whyItMatters": "Konkrete finanzielle oder rechtliche Auswirkung",
+          "source": {
+            "documentType": "Echter Name des Dokuments",
+            "pageNumber": 1,
+            "snippet": "Exakter Originaltextauszug als Beleg"
+          },
+          "confidence": 0.9
+        }
+      ],
+      "positiveFindings": [
+        {
+          "title": "Positiver Aspekt",
+          "description": "Erklärung",
+          "source": {
+            "documentType": "Dokument",
+            "pageNumber": 1,
+            "snippet": "Belegtext"
+          }
+        }
+      ],
+      "missingDocuments": [
+        {
+          "name": "Name des fehlenden Dokuments",
+          "required": true
+        }
+      ],
+      "negotiationPoints": [
+        {
+          "title": "Verhandlungspunkt",
+          "argument": "Argument für den Makler",
+          "leverageScore": 85
+        }
+      ],
+      "sellerQuestions": [
+        {
+          "question": "Konkrete Frage",
+          "context": "Hintergrund"
+        }
+      ],
+      "timeline": [
+        {
+          "event": "Ereignisbeschreibung",
+          "date": "Zeitraum"
+        }
+      ],
+      "crossDocumentConflicts": [
+        {
+          "title": "Widerspruch Titel",
+          "description": "Beschreibung",
+          "severity": "High",
+          "sourceA": { "documentType": "A", "pageNumber": 1, "snippet": "A" },
+          "sourceB": { "documentType": "B", "pageNumber": 1, "snippet": "B" }
+        }
+      ]
+    }
+    
+    HIER SIND DIE GESAMTEN DOKUMENTE:
+    ${context}
+  `;
+
+  return await executeWithEnterpriseResilience(prompt);
 }
 
 export async function analyzeDeepDiveData(
   context: string,
   schemaString: string,
 ): Promise<AnalysisData> {
-  console.log("🔍 Starte Deep Dive Analyse...");
+  const prompt = `
+    Du bist ein Senior Real Estate Analyst. Führe eine vollständige Due Diligence durch.
+    Gib AUSSCHLIESSLICH reines JSON zurück gemäß diesem Schema: 
+    ${schemaString}.
+    
+    HIER SIND DIE DOKUMENTE:
+    ${context}
+  `;
 
-  const systemInstruction = `Du bist ein Senior Real Estate Analyst. Führe eine vollständige Due Diligence durch und gib AUSSCHLIESSLICH reines JSON zurück.`;
-  const prompt = `Schema: ${schemaString}\n\nDokumente:\n${context}`;
-
-  return await callGemini(prompt, systemInstruction);
+  return await executeWithEnterpriseResilience(prompt);
 }
