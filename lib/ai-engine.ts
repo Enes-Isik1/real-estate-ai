@@ -1,12 +1,12 @@
 import { AnalysisData } from "./types/analysis";
 
 const API_KEY = process.env.GEMINI_API_KEY;
-// Das von Google für deinen Account verbindlich vorgeschriebene Produktionsmodell
 const MODEL_NAME = "gemini-3.8-flash";
 
-async function callGeminiDirect(
+async function callGeminiWithRetry(
   prompt: string,
   systemInstruction?: string,
+  maxRetries = 3,
 ): Promise<any> {
   if (!API_KEY) {
     throw new Error(
@@ -35,37 +35,62 @@ async function callGeminiDirect(
     };
   }
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      // 45s Timeout, damit Vercel (60s) nicht hart abbricht, sondern sauber abgefangen wird
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
 
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error(`🔥 Gemini API Fehler (HTTP ${response.status}):`, errorBody);
-    throw new Error(
-      `Die KI-Schnittstelle hat mit Status ${response.status} geantwortet: ${errorBody}`,
-    );
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      // Wenn Google 503 (Overload) meldet und wir noch Versuche haben -> Warten und retry
+      if (response.status === 503 && attempt < maxRetries) {
+        console.warn(
+          `⚠️ Google Server überlastet (503). Versuch ${attempt}/${maxRetries}. Warte 3s...`,
+        );
+        await new Promise((res) => setTimeout(res, 3000 * attempt));
+        continue;
+      }
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorBody}`);
+      }
+
+      const data = await response.json();
+      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+      if (!rawText) {
+        throw new Error("Die KI hat eine leere Antwort zurückgegeben.");
+      }
+
+      return JSON.parse(rawText);
+    } catch (error: any) {
+      if (attempt === maxRetries) {
+        throw error;
+      }
+      console.warn(
+        `⚠️ Versuch ${attempt} fehlgeschlagen (${error.message}). Starte Retry...`,
+      );
+      await new Promise((res) => setTimeout(res, 2000 * attempt));
+    }
   }
-
-  const data = await response.json();
-  const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-  if (!rawText) {
-    throw new Error("Die KI hat eine leere Antwort zurückgegeben.");
-  }
-
-  return JSON.parse(rawText);
 }
 
 export async function analyzeCoreData(context: string): Promise<AnalysisData> {
   console.log("🏢 Starte DealPilot Core-Analyse mit gemini-3.8-flash...");
 
-  // Begrenze den Text auf 30.000 Zeichen, um Vercel-Timeouts (60s) absolut sicher zu verhindern
+  // Text auf 20.000 Zeichen begrenzen, um den 60s-Vercel-Timeout bei Google-Lastspitzen auszuschließen
   const safeContext =
-    context.length > 30000
-      ? context.substring(0, 30000) +
+    context.length > 20000
+      ? context.substring(0, 20000) +
         "\n\n[... Text aus Performancegründen gekürzt ...]"
       : context;
 
@@ -73,7 +98,7 @@ export async function analyzeCoreData(context: string): Promise<AnalysisData> {
 
   const prompt = `
     Du bist ein kompromissloser deutscher Sachverständiger, WEG-Recht-Experte und Senior Real Estate Analyst. 
-    Analysiere die vorliegenden Dokumente (Exposé, Teilungserklärung, WEG-Protokolle, Wirtschaftsplan, Grundbuch etc.) mit absoluter juristischer und kaufmännischer Präzision.
+    Analysiere die vorliegenden Dokumente mit absoluter juristischer und kaufmännischer Präzision.
 
     WICHTIG ZU DEN QUELLEN (EVIDENCE):
     Jedes Risiko und jeder positive Befund MUSS einen echten Beleg aus dem übergebenen Text enthalten. Erfinde NIEMALS Seitenzahlen oder Textsnippets!
@@ -82,81 +107,28 @@ export async function analyzeCoreData(context: string): Promise<AnalysisData> {
     Ermittle einen Deal-Score von 0 bis 100 Punkten ('leadScore'). 
     - Starte bei einem Basiswert von 100 Punkten.
     - Ziehe Punkte ab für: Fehlende Pflichtdokumente, unklare Instandhaltungsrücklagen, Widersprüche oder finanzielle Auffälligkeiten.
-    - Addiere Punkte für: Vollständige Unterlagen, gesunde Rücklagen.
 
-    Du MUSST ein striktes JSON-Objekt zurückgeben, das exakt diesem TypeScript-Schema entspricht:
+    Du MUSST ein striktes JSON-Objekt zurückgeben, das exakt diesem Schema entspricht:
     {
-      "leadScore": (Zahl von 0 bis 100),
-      "executiveSummary": "Kaufmännische Zusammenfassung auf den Punkt gebracht (2-3 Sätze)",
+      "leadScore": 85,
+      "executiveSummary": "Kaufmännische Zusammenfassung (2-3 Sätze)",
       "confidence": 0.95,
-      "overallRecommendation": "Harte, glasklare Handlungsempfehlung für den Makler auf Deutsch",
+      "overallRecommendation": "Harte Handlungsempfehlung",
       "verificationRequired": false,
-      "topRisks": [
-        {
-          "id": "1",
-          "severity": "High",
-          "title": "Prägnanter Risikotitel",
-          "whyItMatters": "Konkrete finanzielle oder rechtliche Auswirkung",
-          "source": {
-            "documentType": "Echter Name des Dokuments",
-            "pageNumber": 1,
-            "snippet": "Exakter Originaltextauszug als Beleg"
-          },
-          "confidence": 0.9
-        }
-      ],
-      "positiveFindings": [
-        {
-          "title": "Positiver Aspekt",
-          "description": "Erklärung",
-          "source": {
-            "documentType": "Dokument",
-            "pageNumber": 1,
-            "snippet": "Belegtext"
-          }
-        }
-      ],
-      "missingDocuments": [
-        {
-          "name": "Name des fehlenden Dokuments",
-          "required": true
-        }
-      ],
-      "negotiationPoints": [
-        {
-          "title": "Verhandlungspunkt",
-          "argument": "Argument für den Makler",
-          "leverageScore": 85
-        }
-      ],
-      "sellerQuestions": [
-        {
-          "question": "Konkrete Frage",
-          "context": "Hintergrund"
-        }
-      ],
-      "timeline": [
-        {
-          "event": "Ereignisbeschreibung",
-          "date": "Zeitraum"
-        }
-      ],
-      "crossDocumentConflicts": [
-        {
-          "title": "Widerspruch Titel",
-          "description": "Beschreibung",
-          "severity": "High",
-          "sourceA": { "documentType": "A", "pageNumber": 1, "snippet": "A" },
-          "sourceB": { "documentType": "B", "pageNumber": 1, "snippet": "B" }
-        }
-      ]
+      "topRisks": [],
+      "positiveFindings": [],
+      "missingDocuments": [],
+      "negotiationPoints": [],
+      "sellerQuestions": [],
+      "timeline": [],
+      "crossDocumentConflicts": []
     }
     
-    HIER SIND DIE GESAMTEN DOKUMENTE:
+    DOKUMENTE:
     ${safeContext}
   `;
 
-  return await callGeminiDirect(prompt, systemInstruction);
+  return await callGeminiWithRetry(prompt, systemInstruction);
 }
 
 export async function analyzeDeepDiveData(
@@ -166,12 +138,12 @@ export async function analyzeDeepDiveData(
   console.log("🔍 Starte Deep Dive Analyse...");
 
   const safeContext =
-    context.length > 30000
-      ? context.substring(0, 30000) + "\n\n[... Text gekürzt ...]"
+    context.length > 20000
+      ? context.substring(0, 20000) + "\n\n[... Text gekürzt ...]"
       : context;
 
   const systemInstruction = `Du bist ein Senior Real Estate Analyst. Führe eine vollständige Due Diligence durch und gib AUSSCHLIESSLICH reines JSON zurück.`;
   const prompt = `Schema: ${schemaString}\n\nDokumente:\n${safeContext}`;
 
-  return await callGeminiDirect(prompt, systemInstruction);
+  return await callGeminiWithRetry(prompt, systemInstruction);
 }
