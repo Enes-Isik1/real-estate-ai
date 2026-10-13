@@ -1,56 +1,87 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { AnalysisData } from "./types/analysis";
 
-// Initialisierung des SDKs
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
-// Die professionelle, stabile Fallback-Kette für Google Gemini
+// Enterprise-Fallback-Kette: Von blitzschnell zu maximal robust
 const MODEL_FALLBACK_CHAIN = [
+  "gemini-2.5-flash",
   "gemini-1.5-flash",
   "gemini-1.5-pro",
-  "gemini-2.0-flash",
 ];
 
-// Helper-Funktion für sichere Modell-Ausführung mit automatischem Failover
-async function executeWithModelFallback(prompt: string) {
+async function executeWithEnterpriseResilience(prompt: string): Promise<any> {
   let lastError: any = null;
 
   for (const modelName of MODEL_FALLBACK_CHAIN) {
-    try {
-      console.log(`🤖 Versuche KI-Analyse mit Modell: ${modelName}`);
-      const model = genAI.getGenerativeModel({ model: modelName });
+    let attempts = 0;
+    const maxRetries = 2;
 
-      const result = await model.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.1,
-        },
-      });
+    while (attempts < maxRetries) {
+      try {
+        attempts++;
+        console.log(
+          `🤖 [Enterprise AI] Versuche Modell '${modelName}' (Versuch ${attempts}/${maxRetries})...`,
+        );
 
-      const rawText = result.response.text() || "{}";
-      return JSON.parse(rawText);
-    } catch (error: any) {
-      console.warn(
-        `⚠️ Modell ${modelName} fehlgeschlagen (${error?.status || error?.message || "Unbekannter Fehler"}). Wechsle zum nächsten Modell...`,
-      );
-      lastError = error;
-      continue; // Versuche das nächste Modell in der Kette
+        const model = genAI.getGenerativeModel({ model: modelName });
+
+        const result = await model.generateContent({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.1,
+          },
+        });
+
+        const rawText = result.response.text() || "{}";
+        return JSON.parse(rawText);
+      } catch (error: any) {
+        lastError = error;
+        const statusCode =
+          error?.status ||
+          (error?.message?.includes("503")
+            ? 503
+            : error?.message?.includes("404")
+              ? 404
+              : 500);
+
+        console.warn(
+          `⚠️ Modell '${modelName}' fehlgeschlagen (Status: ${statusCode}): ${error?.message || "Unbekannter Fehler"}`,
+        );
+
+        // Bei 404 (Modell nicht gefunden) sofort zum nächsten Modell in der Kette wechseln
+        if (statusCode === 404) {
+          break;
+        }
+
+        // Bei 503 (Überlastung) kurz 1,5 Sekunden warten und Retry innerhalb desselben Modells versuchen
+        if (statusCode === 503 && attempts < maxRetries) {
+          console.log(
+            `⏳ Server überlastet (503). Warte 1.5s vor erneutem Versuch mit '${modelName}'...`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          continue;
+        }
+
+        // Bei anderen Fehlern oder aufbrauchenden Retries direkt das nächste Modell in der Kette testen
+        break;
+      }
     }
   }
 
-  // Wenn alle Modelle der Kette fehlgeschlagen sind
+  // Absoluter Notfall-Fallback, falls alle Modelle und Retries fehlschlagen
   console.error(
-    "🔥 Alle KI-Modelle in der Fallback-Kette sind fehlgeschlagen:",
+    "🔥 KRITISCH: Alle Modelle in der Enterprise-Kette sind fehlgeschlagen.",
     lastError,
   );
   throw new Error(
-    "Die KI-Server sind derzeit stark ausgelastet (503). Bitte versuchen Sie es in 1-2 Minuten erneut.",
+    "Die KI-Server sind derzeit stark ausgelastet oder nicht erreichbar. Bitte versuchen Sie es in wenigen Augenblicken erneut.",
   );
 }
 
 export async function analyzeCoreData(context: string): Promise<AnalysisData> {
-  console.log("🏢 Starte Google Gemini Enterprise-Analyse für DealPilot...");
+  console.log("🏢 Starte Google Gemini Enterprise Core-Analyse...");
 
   const prompt = `
     Du bist ein kompromissloser deutscher Sachverständiger, WEG-Recht-Experte und Senior Real Estate Analyst. 
@@ -137,16 +168,7 @@ export async function analyzeCoreData(context: string): Promise<AnalysisData> {
     ${context}
   `;
 
-  try {
-    const parsed = await executeWithModelFallback(prompt);
-    return parsed as AnalysisData;
-  } catch (error: any) {
-    console.error("🔥 Kritischer Fehler bei der Gemini-Analyse:", error);
-    throw new Error(
-      error?.message ||
-        "Die KI konnte die Dokumente nicht strukturieren. Bitte versuchen Sie es erneut.",
-    );
-  }
+  return await executeWithEnterpriseResilience(prompt);
 }
 
 export async function analyzeDeepDiveData(
@@ -162,11 +184,5 @@ export async function analyzeDeepDiveData(
     ${context}
   `;
 
-  try {
-    const parsed = await executeWithModelFallback(prompt);
-    return parsed as AnalysisData;
-  } catch (e) {
-    console.error("🔥 Fehler beim Gemini Deep Dive:", e);
-    throw new Error("Fehler bei der tiefgehenden Dokumentenanalyse.");
-  }
+  return await executeWithEnterpriseResilience(prompt);
 }
