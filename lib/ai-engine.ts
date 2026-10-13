@@ -3,11 +3,11 @@ import { AnalysisData } from "./types/analysis";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
-// Enterprise-Fallback-Kette: Von blitzschnell zu maximal robust
+// Exakte, von der Gemini API v1beta unterstützten Modell-Bezeichnungen
 const MODEL_FALLBACK_CHAIN = [
-  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-lite",
   "gemini-1.5-flash",
-  "gemini-1.5-pro",
 ];
 
 async function executeWithEnterpriseResilience(prompt: string): Promise<any> {
@@ -38,25 +38,27 @@ async function executeWithEnterpriseResilience(prompt: string): Promise<any> {
         return JSON.parse(rawText);
       } catch (error: any) {
         lastError = error;
-        const statusCode =
-          error?.status ||
-          (error?.message?.includes("503")
-            ? 503
-            : error?.message?.includes("404")
-              ? 404
-              : 500);
 
-        console.warn(
-          `⚠️ Modell '${modelName}' fehlgeschlagen (Status: ${statusCode}): ${error?.message || "Unbekannter Fehler"}`,
-        );
+        const errMessage = String(error?.message || "");
+        const is404 =
+          error?.status === 404 ||
+          errMessage.includes("404") ||
+          errMessage.includes("not found");
+        const is503 =
+          error?.status === 503 ||
+          errMessage.includes("503") ||
+          errMessage.includes("overloaded") ||
+          errMessage.includes("high demand");
 
-        // Bei 404 (Modell nicht gefunden) sofort zum nächsten Modell in der Kette wechseln
-        if (statusCode === 404) {
+        console.warn(`⚠️ Modell '${modelName}' fehlgeschlagen: ${errMessage}`);
+
+        // Bei 404 (Modellname existiert in v1beta nicht) sofort zum nächsten Modell springen
+        if (is404) {
           break;
         }
 
-        // Bei 503 (Überlastung) kurz 1,5 Sekunden warten und Retry innerhalb desselben Modells versuchen
-        if (statusCode === 503 && attempts < maxRetries) {
+        // Bei 503 (Server ausgelastet) kurz warten und Retry im selben Modell versuchen
+        if (is503 && attempts < maxRetries) {
           console.log(
             `⏳ Server überlastet (503). Warte 1.5s vor erneutem Versuch mit '${modelName}'...`,
           );
@@ -64,13 +66,11 @@ async function executeWithEnterpriseResilience(prompt: string): Promise<any> {
           continue;
         }
 
-        // Bei anderen Fehlern oder aufbrauchenden Retries direkt das nächste Modell in der Kette testen
         break;
       }
     }
   }
 
-  // Absoluter Notfall-Fallback, falls alle Modelle und Retries fehlschlagen
   console.error(
     "🔥 KRITISCH: Alle Modelle in der Enterprise-Kette sind fehlgeschlagen.",
     lastError,
