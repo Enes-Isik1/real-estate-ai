@@ -12,6 +12,12 @@ import {
   AlignLeft,
   CheckCircle2,
 } from "lucide-react";
+import * as pdfjsLib from "pdfjs-dist";
+
+// Worker für pdfjs konfigurieren (wichtig für Next.js im Browser)
+if (typeof window !== "undefined") {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+}
 
 interface UploadedFile {
   id: string;
@@ -76,27 +82,14 @@ export default function NewDealPage() {
       return;
     }
 
-    // 🛡️ Vercel 4.5MB Payload-Limit Schutz
-    const validSizeFiles = pdfFilesOnly.filter((file) => {
-      const isUnderLimit = file.size <= 4 * 1024 * 1024; // max 4 MB
-      if (!isUnderLimit) {
-        alert(
-          `Die Datei "${file.name}" ist zu groß (${(file.size / (1024 * 1024)).toFixed(1)} MB). Vercel erlaubt maximal 4,5 MB pro Upload im kostenlosen Tarif. Bitte nutze eine kleinere Datei.`,
-        );
-      }
-      return isUnderLimit;
-    });
+    // Speichere die echten File-Objekte (ohne starre Grössenbeschränkung, da Client-Parsing aktiv ist)
+    setRawFiles((prev) => [...prev, ...pdfFilesOnly]);
 
-    if (validSizeFiles.length === 0) return;
-
-    // Speichere die echten File-Objekte für den späteren API-Upload
-    setRawFiles((prev) => [...prev, ...validSizeFiles]);
-
-    const formattedFiles: UploadedFile[] = validSizeFiles.map((file) => {
+    const formattedFiles: UploadedFile[] = pdfFilesOnly.map((file) => {
       return {
         id: Math.random().toString(36).substring(7),
         name: file.name,
-        size: (file.size / (1024 * 1024)).toFixed(2) + " MB", // Korrigiert zu toFixed(2)
+        size: (file.size / (1024 * 1024)).toFixed(2) + " MB",
         type: "pdf",
       };
     });
@@ -107,6 +100,22 @@ export default function NewDealPage() {
     setFiles((prev) => prev.filter((f) => f.id !== id));
     setRawFiles((prev) => prev.filter((_, i) => i !== index));
   };
+
+  // Funktion zum Extrahieren des Textes im Browser (verhindert Vercel-Größenlimits komplett!)
+  async function extractTextFromPDF(file: File): Promise<string> {
+    const arrayBuffer = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    const pdfDoc = await loadingTask.promise;
+
+    let fullText = "";
+    for (let i = 1; i <= pdfDoc.numPages; i++) {
+      const page = await pdfDoc.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map((item: any) => item.str).join(" ");
+      fullText += `[DOKUMENT: ${file.name} | SEITE ${i}]\n${pageText}\n\n`;
+    }
+    return fullText;
+  }
 
   // API-Call & Analyse starten
   const handleStartAnalysis = async () => {
@@ -121,20 +130,26 @@ export default function NewDealPage() {
     setAnalysisError(null);
 
     try {
-      const formData = new FormData();
-      // Wir senden die erste hochgeladene PDF-Datei an die API
-      formData.append("file", rawFiles[0]);
-      formData.append("title", title);
-      formData.append("clientName", clientName);
-      formData.append("clientEmail", clientEmail);
+      // 1. PDF direkt im Browser parsen
+      console.log("Lese PDF lokal im Browser aus...");
+      const extractedText = await extractTextFromPDF(rawFiles[0]);
 
-      // Wir geben dem Request einen großzügigen Timeout von 45 Sekunden
+      // 2. Als sauberes JSON an die API senden
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 45000);
 
       const response = await fetch("/api/analyze", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          clientName,
+          clientEmail,
+          emailText,
+          notes,
+          documentText: extractedText,
+          fileName: rawFiles[0].name,
+        }),
         signal: controller.signal,
       });
 
@@ -142,7 +157,6 @@ export default function NewDealPage() {
 
       const result = await response.json();
 
-      // Ersetze diesen Block in handleStartAnalysis:
       if (response.ok && result.success) {
         const analysisData = result.property?.analysis || result.analysis;
 
@@ -152,8 +166,6 @@ export default function NewDealPage() {
 
         console.log("KI-Analyse erfolgreich:", analysisData);
 
-        // HIER LIEGT DIE LÖSUNG: Nimm die echte ID aus der API-Antwort (z.B. result.property.id)
-        // Fallback auf Date.now() falls die API keine ID liefert
         const dealId =
           result.property?.id || result.id || Date.now().toString();
         const finalTitle = title.trim() || "Unbenannter Deal";
@@ -178,7 +190,7 @@ export default function NewDealPage() {
           JSON.stringify(finishedDeal),
         );
 
-        // Weiterleitung zur Detailseite mit der echten UUID!
+        // Weiterleitung zur Detailseite
         router.push(`/dashboard/deals/${dealId}`);
       } else {
         throw new Error(
@@ -189,7 +201,7 @@ export default function NewDealPage() {
       console.error("Netzwerkfehler im Frontend:", err);
       if (err.name === "AbortError") {
         setAnalysisError(
-          "Die Analyse hat zu lange gedauert (Timeout). Bitte versuche es mit einer etwas kleineren PDF.",
+          "Die Analyse hat zu lange gedauert (Timeout). Bitte versuche es noch einmal.",
         );
       } else {
         setAnalysisError(
