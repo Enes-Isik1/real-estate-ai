@@ -12,10 +12,24 @@ function smartFilterDocumentContext(rawText: string): string {
 
   const lines = rawText.split("\n");
   const relevantKeywords = [
-    "rücklage", "instandhaltung", "wirtschaftsplan", "beschluss", 
-    "hausgeld", "sondernutzung", "teilung", "schaden", "sanierung", 
-    "aufteilung", "euro", "€", "stimmen", "genehmigt", "ablehnung",
-    "eigentümer", "WEG", "haftung"
+    "rücklage",
+    "instandhaltung",
+    "wirtschaftsplan",
+    "beschluss",
+    "hausgeld",
+    "sondernutzung",
+    "teilung",
+    "schaden",
+    "sanierung",
+    "aufteilung",
+    "euro",
+    "€",
+    "stimmen",
+    "genehmigt",
+    "ablehnung",
+    "eigentümer",
+    "WEG",
+    "haftung",
   ];
 
   const filteredLines = lines.filter((line) => {
@@ -29,7 +43,7 @@ function smartFilterDocumentContext(rawText: string): string {
       : rawText.substring(0, 8000);
 
   console.log(
-    `✂️ Free-Tier Filter: Dokument auf ${result.length} Zeichen reduziert.`
+    `✂️ Free-Tier Filter: Dokument auf ${result.length} Zeichen reduziert.`,
   );
   return result;
 }
@@ -39,7 +53,9 @@ async function callGeminiFreeTier(
   systemInstruction?: string,
 ): Promise<any> {
   if (!API_KEY) {
-    throw new Error("GEMINI_API_KEY ist in den Umgebungsvariablen nicht gesetzt.");
+    throw new Error(
+      "GEMINI_API_KEY ist in den Umgebungsvariablen nicht gesetzt.",
+    );
   }
 
   const url = `https://generativelanguage.googleapis.com/v1/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
@@ -66,30 +82,33 @@ async function callGeminiFreeTier(
   // Sicherheits-Pause vor jedem Request, um RPM-Limits des Free Tiers zu respektieren
   await new Promise((res) => setTimeout(res, 2000));
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
 
-  if (response.status === 429) {
-    throw new Error("Free Tier Limit erreicht (Rate Limit / Quota Exceeded). Bitte warte 1-2 Minuten vor dem nächsten Test.");
+    const responseText = await response.text();
+
+    if (!response.ok) {
+      console.error(`❌ GOOGLE API FEHLER (${response.status}):`, responseText);
+      throw new Error(`Google API Error ${response.status}: ${responseText}`);
+    }
+
+    const data = JSON.parse(responseText);
+    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!rawText) {
+      throw new Error("Die KI hat eine leere Antwort zurückgegeben.");
+    }
+
+    return JSON.parse(rawText);
+  } catch (error: any) {
+    console.error("🔥 KRITISCHER FEHLER IN AI ENGINE:", error.message);
+    throw error;
   }
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`HTTP ${response.status}: ${errorBody}`);
-  }
-
-  const data = await response.json();
-  const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-  if (!rawText) {
-    throw new Error("Die KI hat eine leere Antwort zurückgegeben.");
-  }
-
-  return JSON.parse(rawText);
-}
+} // <--- Diese schließende Klammer hat gefehlt!
 
 export async function analyzeCoreData(context: string): Promise<AnalysisData> {
   console.log("🏢 Starte Core-Analyse (Free Tier Modus)...");
