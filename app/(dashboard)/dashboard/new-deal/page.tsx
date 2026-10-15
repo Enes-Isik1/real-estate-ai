@@ -82,7 +82,7 @@ export default function NewDealPage() {
       return;
     }
 
-    // Speichere die echten File-Objekte (ohne starre Grössenbeschränkung, da Client-Parsing aktiv ist)
+    // Speichere die echten File-Objekte
     setRawFiles((prev) => [...prev, ...pdfFilesOnly]);
 
     const formattedFiles: UploadedFile[] = pdfFilesOnly.map((file) => {
@@ -101,7 +101,7 @@ export default function NewDealPage() {
     setRawFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // Funktion zum Extrahieren des Textes im Browser (verhindert Vercel-Größenlimits komplett!)
+  // Funktion zum Extrahieren des Textes im Browser
   async function extractTextFromPDF(file: File): Promise<string> {
     const arrayBuffer = await file.arrayBuffer();
     const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
@@ -120,9 +120,7 @@ export default function NewDealPage() {
   // API-Call & Analyse starten
   const handleStartAnalysis = async () => {
     if (rawFiles.length === 0) {
-      alert(
-        "Bitte lade mindestens eine PDF-Datei hoch, um die Analyse zu starten.",
-      );
+      alert("Bitte lade mindestens eine PDF-Datei hoch.");
       return;
     }
 
@@ -130,84 +128,31 @@ export default function NewDealPage() {
     setAnalysisError(null);
 
     try {
-      // 1. PDF direkt im Browser parsen
-      console.log("Lese PDF lokal im Browser aus...");
-      const extractedText = await extractTextFromPDF(rawFiles[0]);
-
-      // 2. Als sauberes JSON an die API senden
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 45000);
+      const formData = new FormData();
+      formData.append("file", rawFiles[0]); // Die echte PDF-Datei
+      formData.append("title", title);
+      formData.append("clientName", clientName);
+      formData.append("clientEmail", clientEmail);
 
       const response = await fetch("/api/analyze", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title,
-          clientName,
-          clientEmail,
-          emailText,
-          notes,
-          documentText: extractedText,
-          fileName: rawFiles[0].name,
-        }),
-        signal: controller.signal,
+        body: formData, // FormData sendet im Binärformat
       });
-
-      clearTimeout(timeoutId);
 
       const result = await response.json();
 
       if (response.ok && result.success) {
         const analysisData = result.property?.analysis || result.analysis;
-
-        if (!analysisData) {
-          throw new Error("Die KI-Antwort enthielt keine Analysedaten.");
-        }
-
-        console.log("KI-Analyse erfolgreich:", analysisData);
-
         const dealId =
           result.property?.id || result.id || Date.now().toString();
-        const finalTitle = title.trim() || "Unbenannter Deal";
-        const finalClient = clientName.trim() || "Neuer Kunde";
 
-        const finishedDeal = {
-          id: dealId,
-          title: finalTitle,
-          client: finalClient,
-          email: clientEmail || "keine-email@dealpilot.ai",
-          price: analysisData.estimatedPrice || "€ 1.500.000",
-          score: analysisData.leadScore || 50,
-          status: "Reviewing",
-          date: "Gerade eben",
-          analysis: analysisData,
-        };
-
-        // Im SessionStorage speichern
-        sessionStorage.setItem(`deal_${dealId}`, JSON.stringify(finishedDeal));
-        sessionStorage.setItem(
-          "latest_analyzed_deal",
-          JSON.stringify(finishedDeal),
-        );
-
-        // Weiterleitung zur Detailseite
         router.push(`/dashboard/deals/${dealId}`);
       } else {
-        throw new Error(
-          result.error || "Fehler bei der Analyse der Dokumente.",
-        );
+        throw new Error(result.error || "Fehler bei der Analyse.");
       }
     } catch (err: any) {
-      console.error("Netzwerkfehler im Frontend:", err);
-      if (err.name === "AbortError") {
-        setAnalysisError(
-          "Die Analyse hat zu lange gedauert (Timeout). Bitte versuche es noch einmal.",
-        );
-      } else {
-        setAnalysisError(
-          err.message || "Verbindungsfehler zur AI-Schnittstelle.",
-        );
-      }
+      console.error("Fehler:", err);
+      setAnalysisError(err.message || "Verbindungsfehler.");
     } finally {
       setIsAnalyzing(false);
     }
