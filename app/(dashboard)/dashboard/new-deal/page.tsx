@@ -76,14 +76,27 @@ export default function NewDealPage() {
       return;
     }
 
-    // Speichere die echten File-Objekte für den späteren API-Upload
-    setRawFiles((prev) => [...prev, ...pdfFilesOnly]);
+    // 🛡️ Vercel 4.5MB Payload-Limit Schutz
+    const validSizeFiles = pdfFilesOnly.filter((file) => {
+      const isUnderLimit = file.size <= 4 * 1024 * 1024; // max 4 MB
+      if (!isUnderLimit) {
+        alert(
+          `Die Datei "${file.name}" ist zu groß (${(file.size / (1024 * 1024)).toFixed(1)} MB). Vercel erlaubt maximal 4,5 MB pro Upload im kostenlosen Tarif. Bitte nutze eine kleinere Datei.`,
+        );
+      }
+      return isUnderLimit;
+    });
 
-    const formattedFiles: UploadedFile[] = pdfFilesOnly.map((file) => {
+    if (validSizeFiles.length === 0) return;
+
+    // Speichere die echten File-Objekte für den späteren API-Upload
+    setRawFiles((prev) => [...prev, ...validSizeFiles]);
+
+    const formattedFiles: UploadedFile[] = validSizeFiles.map((file) => {
       return {
         id: Math.random().toString(36).substring(7),
         name: file.name,
-        size: (file.size / (1024 * 1024)).toFixed(2) + " MB",
+        size: (file.size / (1024 * 1024)).toFixed(2) + " MB", // Korrigiert zu toFixed(2)
         type: "pdf",
       };
     });

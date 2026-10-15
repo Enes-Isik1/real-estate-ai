@@ -5,6 +5,13 @@ const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
 
+  // 🛡️ Hier fügen wir das größere Body-Limit für Next.js hinzu:
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "15mb",
+    },
+  },
+
   async headers() {
     return [
       {
@@ -19,7 +26,7 @@ const nextConfig = {
   },
 };
 
-// Sichere Ermittlung der mitSentryConfig-Funktion für alle Sentry-Versionen
+// Sichere Ermittlung der withSentryConfig-Funktion für alle Sentry-Versionen
 const withSentryConfig =
   Sentry.withSentryConfig ||
   Sentry.default?.withSentryConfig ||
