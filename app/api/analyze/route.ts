@@ -141,6 +141,13 @@ export async function POST(request: NextRequest) {
     console.log("🚀 Starte Blitz-Analyse mit der KI...");
     const startTime = Date.now();
 
+    // 🛡️ SICHERHEITSSCHNITT GEGEN 413 & TOKEN-LIMITS:
+    // Begrenzt den gesamten Text auf max. 8.000 Zeichen für den Free Tier
+    const safeStructuredContext =
+      structuredContext.length > 8000
+        ? structuredContext.substring(0, 8000)
+        : structuredContext;
+
     let coreAnalysis;
     let attempts = 0;
     const maxAttempts = 3;
@@ -148,7 +155,7 @@ export async function POST(request: NextRequest) {
     while (attempts < maxAttempts) {
       try {
         attempts++;
-        coreAnalysis = await analyzeCoreData(structuredContext);
+        coreAnalysis = await analyzeCoreData(safeStructuredContext);
         break; // Wenn erfolgreich, Schleife verlassen
       } catch (aiError: any) {
         console.warn(
