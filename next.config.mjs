@@ -8,7 +8,7 @@ const nextConfig = {
   // 🛡️ Hier fügen wir das größere Body-Limit für Next.js hinzu:
   experimental: {
     serverActions: {
-      bodySizeLimit: "15mb",
+      bodySizeLimit: "20mb",
     },
   },
 

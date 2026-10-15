@@ -12,6 +12,12 @@ import {
   AlignLeft,
   CheckCircle2,
 } from "lucide-react";
+import * as pdfjsLib from "pdfjs-dist";
+
+// Worker für pdfjs im Browser konfigurieren
+if (typeof window !== "undefined") {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+}
 
 interface UploadedFile {
   id: string;
@@ -89,7 +95,23 @@ export default function NewDealPage() {
     setRawFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // API-Call & Analyse starten (sendet FormData an deine bestehende Route)
+  // 🛡️ PDF direkt im Browser parsen (Umgeht das 4,5MB Vercel-Limit zu 100%)
+  async function extractTextFromPDF(file: File): Promise<string> {
+    const arrayBuffer = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    const pdfDoc = await loadingTask.promise;
+
+    let fullText = "";
+    for (let i = 1; i <= pdfDoc.numPages; i++) {
+      const page = await pdfDoc.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map((item: any) => item.str).join(" ");
+      fullText += `[DOKUMENT: ${file.name} | SEITE ${i}]\n${pageText}\n\n`;
+    }
+    return fullText;
+  }
+
+  // API-Call & Analyse starten (sendet sauberen JSON-Text statt rohem FormData)
   const handleStartAnalysis = async () => {
     if (rawFiles.length === 0) {
       alert("Bitte lade mindestens eine PDF-Datei hoch.");
@@ -100,18 +122,22 @@ export default function NewDealPage() {
     setAnalysisError(null);
 
     try {
-      const formData = new FormData();
-      formData.append("file", rawFiles[0]);
-      formData.append("title", title);
-      formData.append("clientName", clientName);
-      formData.append("clientEmail", clientEmail);
-      formData.append("emailText", emailText);
-      formData.append("notes", notes);
+      console.log("Lese PDF lokal im Browser aus...");
+      const extractedText = await extractTextFromPDF(rawFiles[0]);
 
-      console.log("Sende FormData an Backend...");
+      console.log("Sende Text-Payload an Backend...");
       const response = await fetch("/api/analyze", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          clientName,
+          clientEmail,
+          emailText,
+          notes,
+          documentText: extractedText,
+          fileName: rawFiles[0].name,
+        }),
       });
 
       const result = await response.json();
@@ -125,10 +151,7 @@ export default function NewDealPage() {
           title: title.trim() || "Unbenannter Deal",
           client: clientName.trim() || "Neuer Kunde",
           email: clientEmail || "keine-email@dealpilot.ai",
-          price: analysisData?.multiFactorScore?.breakdown?.financialClarity
-            ?.score
-            ? `€ ${analysisData.multiFactorScore.breakdown.financialClarity.score * 15000}`
-            : "€ 1.500.000",
+          price: "€ 1.500.000",
           score: analysisData?.leadScore || 50,
           status: "Reviewing",
           date: "Gerade eben",
@@ -231,38 +254,6 @@ export default function NewDealPage() {
                   </div>
                 </div>
               </div>
-            </div>
-
-            <div className="bg-white border border-gray-200/60 rounded-2xl shadow-sm p-6 space-y-4">
-              <div className="flex items-center gap-2">
-                <Mail className="w-5 h-5 text-gray-400" />
-                <h3 className="font-bold text-gray-900 text-lg">
-                  Inquiry Email einfügen
-                </h3>
-              </div>
-              <textarea
-                value={emailText}
-                onChange={(e) => setEmailText(e.target.value)}
-                rows={6}
-                placeholder="Inhalt der E-Mail hier einfügen..."
-                className="w-full bg-gray-50 hover:bg-gray-100/50 focus:bg-white text-gray-900 text-sm py-3 px-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none"
-              />
-            </div>
-
-            <div className="bg-white border border-gray-200/60 rounded-2xl shadow-sm p-6 space-y-4">
-              <div className="flex items-center gap-2">
-                <AlignLeft className="w-5 h-5 text-gray-400" />
-                <h3 className="font-bold text-gray-900 text-lg">
-                  Interne Notizen
-                </h3>
-              </div>
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={3}
-                placeholder="Interne Gedanken oder Notizen..."
-                className="w-full bg-gray-50 hover:bg-gray-100/50 focus:bg-white text-gray-900 text-sm py-3 px-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none"
-              />
             </div>
           </div>
 
