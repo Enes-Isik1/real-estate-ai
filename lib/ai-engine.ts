@@ -3,14 +3,43 @@ import { AnalysisData } from "./types/analysis";
 const API_KEY = process.env.GEMINI_API_KEY;
 const MODEL_NAME = "gemini-3.8-flash";
 
-async function callGeminiDirect(
+/**
+ * Extrem kompakter Filter für das Free Tier, um Token-Limits (TPM) nicht zu sprengen.
+ */
+function smartFilterDocumentContext(rawText: string): string {
+  // Free Tier Token-Schutz: Maximal 8.000 Zeichen, um Rate-Limits zu umgehen
+  if (rawText.length <= 8000) return rawText;
+
+  const lines = rawText.split("\n");
+  const relevantKeywords = [
+    "rücklage", "instandhaltung", "wirtschaftsplan", "beschluss", 
+    "hausgeld", "sondernutzung", "teilung", "schaden", "sanierung", 
+    "aufteilung", "euro", "€", "stimmen", "genehmigt", "ablehnung",
+    "eigentümer", "WEG", "haftung"
+  ];
+
+  const filteredLines = lines.filter((line) => {
+    const lower = line.toLowerCase();
+    return relevantKeywords.some((keyword) => lower.includes(keyword));
+  });
+
+  const result =
+    filteredLines.length > 30
+      ? filteredLines.join("\n").substring(0, 8000)
+      : rawText.substring(0, 8000);
+
+  console.log(
+    `✂️ Free-Tier Filter: Dokument auf ${result.length} Zeichen reduziert.`
+  );
+  return result;
+}
+
+async function callGeminiFreeTier(
   prompt: string,
   systemInstruction?: string,
 ): Promise<any> {
   if (!API_KEY) {
-    throw new Error(
-      "GEMINI_API_KEY ist in den Umgebungsvariablen nicht gesetzt.",
-    );
+    throw new Error("GEMINI_API_KEY ist in den Umgebungsvariablen nicht gesetzt.");
   }
 
   const url = `https://generativelanguage.googleapis.com/v1/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
@@ -34,11 +63,18 @@ async function callGeminiDirect(
     };
   }
 
+  // Sicherheits-Pause vor jedem Request, um RPM-Limits des Free Tiers zu respektieren
+  await new Promise((res) => setTimeout(res, 2000));
+
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+
+  if (response.status === 429) {
+    throw new Error("Free Tier Limit erreicht (Rate Limit / Quota Exceeded). Bitte warte 1-2 Minuten vor dem nächsten Test.");
+  }
 
   if (!response.ok) {
     const errorBody = await response.text();
@@ -56,16 +92,13 @@ async function callGeminiDirect(
 }
 
 export async function analyzeCoreData(context: string): Promise<AnalysisData> {
-  console.log("🏢 Starte Enterprise Chunk-Analyse mit gemini-3.8-flash...");
+  console.log("🏢 Starte Core-Analyse (Free Tier Modus)...");
+  const safeContext = smartFilterDocumentContext(context);
 
-  // Begrenze den Chunk strikt auf 12.000 Zeichen, damit Vercel in Sekundenschnelle antwortet
-  const safeContext =
-    context.length > 12000 ? context.substring(0, 12000) : context;
-
-  const systemInstruction = `Du bist ein deutscher Sachverständiger und WEG-Recht-Experte. Analysiere präzise und antworte AUSSCHLIESSLICH im validen JSON-Format gemäß Vorgabe.`;
+  const systemInstruction = `Du bist ein deutscher Sachverständiger und WEG-Recht-Experte. Antworte AUSSCHLIESSLICH im validen JSON-Format.`;
 
   const prompt = `
-    Analysiere die folgenden Dokumenten-Auszüge und gib ein striktes JSON-Objekt zurück, das exakt diesem Schema entspricht:
+    Analysiere die folgenden Dokumente und gib ein striktes JSON-Objekt zurück, das exakt diesem Schema entspricht:
     {
       "leadScore": 85,
       "executiveSummary": "Zusammenfassung (2-3 Sätze)",
@@ -85,20 +118,18 @@ export async function analyzeCoreData(context: string): Promise<AnalysisData> {
     ${safeContext}
   `;
 
-  return await callGeminiDirect(prompt, systemInstruction);
+  return await callGeminiFreeTier(prompt, systemInstruction);
 }
 
 export async function analyzeDeepDiveData(
   context: string,
   schemaString: string,
 ): Promise<AnalysisData> {
-  console.log("🔍 Starte Deep Dive Chunk-Analyse...");
+  console.log("🔍 Starte Deep Dive (Free Tier Modus)...");
+  const safeContext = smartFilterDocumentContext(context);
 
-  const safeContext =
-    context.length > 12000 ? context.substring(0, 12000) : context;
-
-  const systemInstruction = `Du bist ein Senior Real Estate Analyst. Führe eine vollständige Due Diligence durch und gib AUSSCHLIESSLICH reines JSON zurück.`;
+  const systemInstruction = `Du bist ein Senior Real Estate Analyst. Gib AUSSCHLIESSLICH reines JSON zurück.`;
   const prompt = `Schema: ${schemaString}\n\nDokumente:\n${safeContext}`;
 
-  return await callGeminiDirect(prompt, systemInstruction);
+  return await callGeminiFreeTier(prompt, systemInstruction);
 }
