@@ -12,12 +12,6 @@ import {
   AlignLeft,
   CheckCircle2,
 } from "lucide-react";
-import * as pdfjsLib from "pdfjs-dist";
-
-// Worker für pdfjs konfigurieren (wichtig für Next.js im Browser)
-if (typeof window !== "undefined") {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
-}
 
 interface UploadedFile {
   id: string;
@@ -29,25 +23,21 @@ interface UploadedFile {
 export default function NewDealPage() {
   const router = useRouter();
 
-  // Form States
   const [title, setTitle] = useState("");
   const [clientName, setClientName] = useState("");
   const [clientEmail, setClientEmail] = useState("");
   const [emailText, setEmailText] = useState("");
   const [notes, setNotes] = useState("");
 
-  // Upload States
   const [files, setFiles] = useState<UploadedFile[]>([]);
-  const [rawFiles, setRawFiles] = useState<File[]>([]); // Speichert die echten File-Objekte für die API
+  const [rawFiles, setRawFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // AI Analysis & Loading States
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
 
-  // Handle drag and drop styling
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(true);
@@ -72,7 +62,6 @@ export default function NewDealPage() {
   };
 
   const addFiles = (newFiles: File[]) => {
-    // Für die Analyse lassen wir primär PDFs zu
     const pdfFilesOnly = newFiles.filter(
       (file) => file.type === "application/pdf" || file.name.endsWith(".pdf"),
     );
@@ -82,7 +71,6 @@ export default function NewDealPage() {
       return;
     }
 
-    // Speichere die echten File-Objekte
     setRawFiles((prev) => [...prev, ...pdfFilesOnly]);
 
     const formattedFiles: UploadedFile[] = pdfFilesOnly.map((file) => {
@@ -101,23 +89,7 @@ export default function NewDealPage() {
     setRawFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // Funktion zum Extrahieren des Textes im Browser
-  async function extractTextFromPDF(file: File): Promise<string> {
-    const arrayBuffer = await file.arrayBuffer();
-    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-    const pdfDoc = await loadingTask.promise;
-
-    let fullText = "";
-    for (let i = 1; i <= pdfDoc.numPages; i++) {
-      const page = await pdfDoc.getPage(i);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items.map((item: any) => item.str).join(" ");
-      fullText += `[DOKUMENT: ${file.name} | SEITE ${i}]\n${pageText}\n\n`;
-    }
-    return fullText;
-  }
-
-  // API-Call & Analyse starten
+  // API-Call & Analyse starten (sendet FormData an deine bestehende Route)
   const handleStartAnalysis = async () => {
     if (rawFiles.length === 0) {
       alert("Bitte lade mindestens eine PDF-Datei hoch.");
@@ -129,30 +101,55 @@ export default function NewDealPage() {
 
     try {
       const formData = new FormData();
-      formData.append("file", rawFiles[0]); // Die echte PDF-Datei
+      formData.append("file", rawFiles[0]);
       formData.append("title", title);
       formData.append("clientName", clientName);
       formData.append("clientEmail", clientEmail);
+      formData.append("emailText", emailText);
+      formData.append("notes", notes);
 
+      console.log("Sende FormData an Backend...");
       const response = await fetch("/api/analyze", {
         method: "POST",
-        body: formData, // FormData sendet im Binärformat
+        body: formData,
       });
 
       const result = await response.json();
 
       if (response.ok && result.success) {
-        const analysisData = result.property?.analysis || result.analysis;
-        const dealId =
-          result.property?.id || result.id || Date.now().toString();
+        const analysisData = result.property?.analysis;
+        const dealId = result.property?.id || Date.now().toString();
+
+        const finishedDeal = {
+          id: dealId,
+          title: title.trim() || "Unbenannter Deal",
+          client: clientName.trim() || "Neuer Kunde",
+          email: clientEmail || "keine-email@dealpilot.ai",
+          price: analysisData?.multiFactorScore?.breakdown?.financialClarity
+            ?.score
+            ? `€ ${analysisData.multiFactorScore.breakdown.financialClarity.score * 15000}`
+            : "€ 1.500.000",
+          score: analysisData?.leadScore || 50,
+          status: "Reviewing",
+          date: "Gerade eben",
+          analysis: analysisData,
+        };
+
+        sessionStorage.setItem(`deal_${dealId}`, JSON.stringify(finishedDeal));
+        sessionStorage.setItem(
+          "latest_analyzed_deal",
+          JSON.stringify(finishedDeal),
+        );
 
         router.push(`/dashboard/deals/${dealId}`);
       } else {
         throw new Error(result.error || "Fehler bei der Analyse.");
       }
     } catch (err: any) {
-      console.error("Fehler:", err);
-      setAnalysisError(err.message || "Verbindungsfehler.");
+      console.error("Fehler im Frontend:", err);
+      setAnalysisError(
+        err.message || "Verbindungsfehler zur AI-Schnittstelle.",
+      );
     } finally {
       setIsAnalyzing(false);
     }
@@ -164,7 +161,6 @@ export default function NewDealPage() {
 
   return (
     <div className="max-w-[1000px] mx-auto pb-24 p-6 md:p-8 space-y-8 animate-fade-in-up">
-      {/* Back to Dashboard Link */}
       <button
         onClick={() => router.back()}
         className="group flex items-center gap-2 text-sm font-semibold text-gray-500 hover:text-indigo-600 transition-colors cursor-pointer"
@@ -173,7 +169,6 @@ export default function NewDealPage() {
         Back to Dashboard
       </button>
 
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-200/60 pb-6">
         <div>
           <h1 className="text-3xl font-black text-gray-900 tracking-tight">
@@ -188,14 +183,11 @@ export default function NewDealPage() {
 
       {!isSuccess ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-          {/* Linke Spalte: Formular-Daten */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Sektion 1: Basic Information */}
             <div className="bg-white border border-gray-200/60 rounded-2xl shadow-sm p-6 space-y-4">
               <h3 className="font-bold text-gray-900 text-lg">
                 General Information
               </h3>
-
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">
@@ -241,7 +233,6 @@ export default function NewDealPage() {
               </div>
             </div>
 
-            {/* Sektion 2: Email Copy/Paste */}
             <div className="bg-white border border-gray-200/60 rounded-2xl shadow-sm p-6 space-y-4">
               <div className="flex items-center gap-2">
                 <Mail className="w-5 h-5 text-gray-400" />
@@ -249,21 +240,15 @@ export default function NewDealPage() {
                   Inquiry Email einfügen
                 </h3>
               </div>
-              <p className="text-xs text-gray-400">
-                Füge hier die ursprüngliche Anfrage-E-Mail ein. (Optional)
-              </p>
-              <div>
-                <textarea
-                  value={emailText}
-                  onChange={(e) => setEmailText(e.target.value)}
-                  rows={6}
-                  placeholder="Inhalt der E-Mail hier einfügen..."
-                  className="w-full bg-gray-50 hover:bg-gray-100/50 focus:bg-white text-gray-900 text-sm py-3 px-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none"
-                />
-              </div>
+              <textarea
+                value={emailText}
+                onChange={(e) => setEmailText(e.target.value)}
+                rows={6}
+                placeholder="Inhalt der E-Mail hier einfügen..."
+                className="w-full bg-gray-50 hover:bg-gray-100/50 focus:bg-white text-gray-900 text-sm py-3 px-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none"
+              />
             </div>
 
-            {/* Sektion 3: Internal Notes */}
             <div className="bg-white border border-gray-200/60 rounded-2xl shadow-sm p-6 space-y-4">
               <div className="flex items-center gap-2">
                 <AlignLeft className="w-5 h-5 text-gray-400" />
@@ -271,21 +256,17 @@ export default function NewDealPage() {
                   Interne Notizen
                 </h3>
               </div>
-              <div>
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={3}
-                  placeholder="Interne Gedanken oder Notizen aus Telefongesprächen..."
-                  className="w-full bg-gray-50 hover:bg-gray-100/50 focus:bg-white text-gray-900 text-sm py-3 px-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none"
-                />
-              </div>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={3}
+                placeholder="Interne Gedanken oder Notizen..."
+                className="w-full bg-gray-50 hover:bg-gray-100/50 focus:bg-white text-gray-900 text-sm py-3 px-4 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none"
+              />
             </div>
           </div>
 
-          {/* Rechte Spalte */}
           <div className="space-y-6 lg:sticky lg:top-24">
-            {/* Sektion 4: File Upload Container */}
             <div className="bg-white border border-gray-200/60 rounded-2xl shadow-sm p-6 space-y-4">
               <h3 className="font-bold text-gray-900 text-lg">
                 Dokumente (PDF)
@@ -310,11 +291,7 @@ export default function NewDealPage() {
                   accept="application/pdf"
                   className="hidden"
                 />
-                <UploadCloud
-                  className={`w-10 h-10 mx-auto transition-transform duration-200 ${
-                    isDragging ? "text-indigo-600 scale-110" : "text-gray-400"
-                  }`}
-                />
+                <UploadCloud className="w-10 h-10 mx-auto text-gray-400" />
                 <p className="mt-2 text-sm font-bold text-gray-700">
                   Zieh die PDF-Datei hierhin
                 </p>
@@ -323,7 +300,6 @@ export default function NewDealPage() {
                 </p>
               </div>
 
-              {/* Uploaded Files List */}
               {files.length > 0 && (
                 <div className="space-y-2 pt-2">
                   <div className="flex justify-between items-center text-xs font-bold text-gray-400 uppercase tracking-wider">
@@ -334,7 +310,7 @@ export default function NewDealPage() {
                     {files.map((file, index) => (
                       <div
                         key={file.id}
-                        className="flex items-center justify-between p-2.5 bg-slate-50 border border-gray-200/60 rounded-xl text-xs hover:border-gray-300 transition-colors"
+                        className="flex items-center justify-between p-2.5 bg-slate-50 border border-gray-200/60 rounded-xl text-xs"
                       >
                         <div className="flex items-center gap-2 truncate pr-2">
                           <FileText className="w-4 h-4 text-rose-500 flex-shrink-0" />
@@ -358,7 +334,6 @@ export default function NewDealPage() {
               )}
             </div>
 
-            {/* Sektion 5: Analyse Trigger Button */}
             <div className="space-y-4">
               {analysisError && (
                 <p className="text-red-500 text-xs font-semibold bg-red-50 border border-red-100 rounded-xl p-3">
@@ -369,14 +344,14 @@ export default function NewDealPage() {
               <button
                 onClick={handleStartAnalysis}
                 disabled={isAnalyzing || files.length === 0}
-                className={`w-full font-bold py-3 px-6 rounded-2xl shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer group ${
+                className={`w-full font-bold py-3 px-6 rounded-2xl shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer ${
                   isAnalyzing
                     ? "bg-gray-400 cursor-not-allowed text-white"
-                    : "bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white shadow-indigo-600/10"
+                    : "bg-indigo-600 hover:bg-indigo-500 text-white"
                 }`}
               >
                 <Sparkles
-                  className={`w-5 h-5 text-indigo-200 ${isAnalyzing ? "animate-spin" : "group-hover:scale-110 transition-transform"}`}
+                  className={`w-5 h-5 text-indigo-200 ${isAnalyzing ? "animate-spin" : ""}`}
                 />
                 <span>
                   {isAnalyzing
@@ -388,28 +363,19 @@ export default function NewDealPage() {
           </div>
         </div>
       ) : (
-        /* Sektion 6: AI-Success Screen */
         <div className="bg-white border border-gray-200/60 rounded-3xl shadow-lg p-10 max-w-2xl mx-auto text-center space-y-6 py-16">
           <div className="w-16 h-16 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto border border-emerald-100 shadow-sm">
             <CheckCircle2 className="w-8 h-8" />
           </div>
-          <div className="space-y-2">
-            <h2 className="text-2xl font-black text-gray-900 tracking-tight">
-              Deal erstellt & analysiert!
-            </h2>
-            <p className="text-gray-400 text-sm">
-              Die KI hat das PDF-Dokument erfolgreich ausgelesen und
-              strukturiert.
-            </p>
-          </div>
-          <div className="pt-4">
-            <button
-              onClick={handleDone}
-              className="bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold py-3 px-8 rounded-2xl shadow-md transition-all cursor-pointer"
-            >
-              Zurück zum Dashboard
-            </button>
-          </div>
+          <h2 className="text-2xl font-black text-gray-900 tracking-tight">
+            Deal erstellt & analysiert!
+          </h2>
+          <button
+            onClick={handleDone}
+            className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-8 rounded-2xl shadow-md transition-all cursor-pointer"
+          >
+            Zurück zum Dashboard
+          </button>
         </div>
       )}
     </div>
