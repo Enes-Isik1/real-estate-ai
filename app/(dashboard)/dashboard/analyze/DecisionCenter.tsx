@@ -78,9 +78,13 @@ const recommendationConfig: Record<RecommendationType, RecommendationStyle> = {
 };
 
 interface DecisionCenterProps {
-  score?: number; // 👈 Neu hinzugefügt für den echten Deal-Score
+  score?: number;
   analysis?: {
     leadScore?: number;
+    raw_json?: any; // 👈 Hinzugefügt
+    missingDocuments?: any[]; // 👈 Hinzugefügt
+    topRisks?: any[]; // 👈 Hinzugefügt
+    crossDocumentConflicts?: any[]; // 👈 Hinzugefügt
     multiFactorScore?: {
       overallScore: number;
       breakdown: {
@@ -121,9 +125,46 @@ export default function DecisionCenter({
   analysis,
   risks = [],
 }: DecisionCenterProps) {
-  // Holt den Score flexibel: Entweder direkt übergeben, von der KI, oder 50 als Fallback
+  // Holt den Score flexibel
   const score = propScore ?? analysis?.leadScore ?? 50;
-  const multiFactor = analysis?.multiFactorScore;
+
+  // 1. Versuche das multiFactorScore-Objekt flexibel zu finden
+  const multiFactor =
+    analysis?.multiFactorScore || analysis?.raw_json?.multiFactorScore;
+
+  // 2. Dynamische Berechnung als Sicherheitsnetz (falls multiFactorScore im JSON fehlt)
+  const missingCount = (analysis?.missingDocuments || []).length;
+  const riskCount = (analysis?.topRisks || risks || []).length;
+  const conflictCount = (analysis?.crossDocumentConflicts || []).length;
+
+  const docScore =
+    multiFactor?.breakdown?.documentCompleteness?.score ??
+    Math.min(
+      100,
+      Math.max(15, Math.round((100 - missingCount * 25) * 0.4 + score * 0.6)),
+    );
+
+  const riskScore =
+    multiFactor?.breakdown?.riskSafety?.score ??
+    Math.min(
+      100,
+      Math.max(
+        15,
+        Math.round(
+          (100 - riskCount * 25 - conflictCount * 35) * 0.4 + score * 0.6,
+        ),
+      ),
+    );
+
+  const legalScore =
+    multiFactor?.breakdown?.legalCompliance?.score ??
+    Math.min(
+      100,
+      Math.max(
+        15,
+        Math.round((conflictCount === 0 ? 90 : 40) * 0.4 + score * 0.6),
+      ),
+    );
 
   let currentRecommendation: RecommendationType = "Proceed with Conditions";
   if (score >= 85 && risks.length === 0) currentRecommendation = "Proceed";
@@ -142,23 +183,34 @@ export default function DecisionCenter({
     },
     {
       label: "Unterlagen-Vollständigkeit",
-      value: `${multiFactor?.breakdown?.documentCompleteness?.score ?? score}%`,
+      value: `${docScore}%`,
       trend:
-        multiFactor?.breakdown?.documentCompleteness?.label || "Vollständig",
+        multiFactor?.breakdown?.documentCompleteness?.label ||
+        (missingCount === 0
+          ? "Vollständig"
+          : `${missingCount} Dokument(e) fehlen`),
       color: "text-indigo-600",
       icon: <FileText className="w-4 h-4" />,
     },
     {
       label: "Risiko- & Lastenfreiheit",
-      value: `${multiFactor?.breakdown?.riskSafety?.score ?? score}%`,
-      trend: `${risks.length} Risiken erkannt`,
+      value: `${riskScore}%`,
+      trend:
+        multiFactor?.breakdown?.riskSafety?.label ||
+        (riskCount === 0
+          ? "Keine Lasten erkannt"
+          : `${riskCount} Risiken erkannt`),
       color: "text-amber-600",
       icon: <ShieldAlert className="w-4 h-4" />,
     },
     {
       label: "Rechtliche Konsistenz",
-      value: `${multiFactor?.breakdown?.legalCompliance?.score ?? score}%`,
-      trend: "Geprüft",
+      value: `${legalScore}%`,
+      trend:
+        multiFactor?.breakdown?.legalCompliance?.label ||
+        (conflictCount === 0
+          ? "Keine Widersprüche"
+          : `${conflictCount} Unstimmigkeiten`),
       color: "text-emerald-600",
       icon: <Scale className="w-4 h-4" />,
     },
