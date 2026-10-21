@@ -141,48 +141,14 @@ export async function POST(request: NextRequest) {
     console.log("🚀 Starte Blitz-Analyse mit der KI...");
     const startTime = Date.now();
 
-    // 🛡️ SICHERHEITSSCHNITT GEGEN 413 & TOKEN-LIMITS:
-    // Begrenzt den gesamten Text auf max. 8.000 Zeichen für den Free Tier
+    // 🛡️ HOBBY PLAN OPTIMIERUNG: Text auf max. 4.000 Zeichen begrenzen für maximale Geschwindigkeit
     const safeStructuredContext =
-      structuredContext.length > 8000
-        ? structuredContext.substring(0, 8000)
+      structuredContext.length > 4000
+        ? structuredContext.substring(0, 4000)
         : structuredContext;
 
-    let coreAnalysis;
-    let attempts = 0;
-    const maxAttempts = 3;
-
-    while (attempts < maxAttempts) {
-      try {
-        attempts++;
-        coreAnalysis = await analyzeCoreData(safeStructuredContext);
-        break; // Wenn erfolgreich, Schleife verlassen
-      } catch (aiError: any) {
-        console.warn(
-          `⚠️ KI-Versuch ${attempts} fehlgeschlagen:`,
-          aiError?.message || aiError,
-        );
-
-        // Prüfen ob es ein 503 oder Überlastungsfehler ist und ob wir noch Versuche haben
-        const isOverloaded =
-          aiError?.status === 503 ||
-          aiError?.message?.includes("503") ||
-          aiError?.message?.includes("overloaded");
-
-        if (attempts >= maxAttempts || !isOverloaded) {
-          if (attempts >= maxAttempts) {
-            console.error(
-              "🔥 Alle KI-Wiederholungsversuche fehlgeschlagen wegen Überlastung.",
-            );
-          }
-          throw aiError;
-        }
-
-        // 2 Sekunden warten vor dem nächsten Versuch (Exponential Backoff)
-        console.log(`⏳ Warte 2 Sekunden vor Retry ${attempts + 1}...`);
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-    }
+    // Direkt 1 einzelner, schneller Durchlauf ohne zeitraubende Retry-Schleife
+    const coreAnalysis = await analyzeCoreData(safeStructuredContext);
 
     if (!coreAnalysis || typeof coreAnalysis.leadScore !== "number") {
       return NextResponse.json(

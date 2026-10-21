@@ -106,6 +106,8 @@ export interface AnalysisData {
   sellerQuestions: SellerQuestion[];
   timeline: TimelineEvent[];
   crossDocumentConflicts: Conflict[];
+  nextActions?: any[]; // 👈 Hier neu ergänzen
+  classifiedDocuments?: any[]; // 👈 Hier neu ergänzen
 }
 
 // --- Dokumenten- & Chunks-Typen ---
