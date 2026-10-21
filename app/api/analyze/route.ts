@@ -395,7 +395,7 @@ export async function POST(request: NextRequest) {
     if (jobError) throw jobError;
 
     // ⚡ Vercel / Node non-blocking execution anstoßen
-    processAnalysisInBackground(
+    await processAnalysisInBackground(
       job.id,
       dealId!,
       structuredContext,
