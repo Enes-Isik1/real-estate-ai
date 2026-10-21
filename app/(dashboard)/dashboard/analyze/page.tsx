@@ -152,7 +152,15 @@ function AnalyzeContent({ dealId }: { dealId?: string }) {
         <ExportButton dealId={dealId} />
       </div>
 
-      <DecisionCenter risks={risks} />
+      <DecisionCenter
+        score={
+          analysis?.leadScore ??
+          uploadedData?.property?.decisionCenter?.score ??
+          50
+        }
+        analysis={analysis}
+        risks={risks}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-8 space-y-6">
