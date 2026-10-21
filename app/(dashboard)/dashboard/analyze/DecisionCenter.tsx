@@ -142,21 +142,22 @@ export default function DecisionCenter({
     },
     {
       label: "Unterlagen-Vollständigkeit",
-      value: `${multiFactor?.breakdown.documentCompleteness.score ?? 85}%`,
-      trend: multiFactor?.breakdown.documentCompleteness.label || "Vollständig",
+      value: `${multiFactor?.breakdown?.documentCompleteness?.score ?? score}%`,
+      trend:
+        multiFactor?.breakdown?.documentCompleteness?.label || "Vollständig",
       color: "text-indigo-600",
       icon: <FileText className="w-4 h-4" />,
     },
     {
       label: "Risiko- & Lastenfreiheit",
-      value: `${multiFactor?.breakdown.riskSafety.score ?? 90}%`,
+      value: `${multiFactor?.breakdown?.riskSafety?.score ?? score}%`,
       trend: `${risks.length} Risiken erkannt`,
       color: "text-amber-600",
       icon: <ShieldAlert className="w-4 h-4" />,
     },
     {
       label: "Rechtliche Konsistenz",
-      value: `${multiFactor?.breakdown.legalCompliance.score ?? 95}%`,
+      value: `${multiFactor?.breakdown?.legalCompliance?.score ?? score}%`,
       trend: "Geprüft",
       color: "text-emerald-600",
       icon: <Scale className="w-4 h-4" />,
