@@ -39,13 +39,17 @@ async function processAnalysisInBackground(
         ? structuredContext.substring(0, 8000)
         : structuredContext;
 
+    console.log(
+      `[Job ${jobId}] 📄 Sende Context mit Länge ${safeStructuredContext.length} an KI...`,
+    );
+
     const coreAnalysis = await analyzeCoreData(safeStructuredContext);
 
     if (!coreAnalysis || typeof coreAnalysis.leadScore !== "number") {
       throw new Error("Valide KI-Analyse konnte nicht generiert werden.");
     }
 
-    const sanitizedLeadScore = Math.round(Number(coreAnalysis.leadScore) || 50);
+    const sanitizedLeadScore = Math.round(Number(coreAnalysis.leadScore));
     const finalStatus = sanitizedLeadScore > 70 ? "Ready" : "Needs Review";
 
     // 3. Multi-Faktor Sub-Scores zentral berechnen (Single Source of Truth)
@@ -181,7 +185,7 @@ async function processAnalysisInBackground(
       .eq("id", jobId);
 
     console.log(
-      `[Job ${jobId}] ✅ Hintergrund-Analyse ERFOLGREICH abgeschlossen!`,
+      `[Job ${jobId}] ✅ Hintergrund-Analyse ERFOLGREICH abgeschlossen mit Score: ${sanitizedLeadScore}`,
     );
   } catch (err: any) {
     console.error(`[Job ${jobId}] 🔥 FEHLER in Hintergrund-Analyse:`, err);
@@ -243,7 +247,7 @@ export async function POST(request: NextRequest) {
     const allChunks: any[] = [];
     const fileBuffers: { name: string; buffer: Buffer; type: string }[] = [];
 
-    // Paralelles PDF-Parsing
+    // Paralleles PDF-Parsing
     const fileProcessingPromises = files.map(async (file) => {
       if (file.size > MAX_FILE_SIZE) {
         throw new Error(`Datei ${file.name} ist zu groß (max 10MB).`);
@@ -257,13 +261,24 @@ export async function POST(request: NextRequest) {
         return null;
       }
 
-      const pdfData = await pdf(buffer);
+      let parsedText = "";
+      try {
+        const pdfData = await pdf(buffer);
+        parsedText = pdfData.text || "";
+      } catch (pdfErr) {
+        console.warn(`⚠️ Warnung beim Lesen von ${file.name}:`, pdfErr);
+      }
+
+      // Falls kein Text extrahiert werden konnte (z.B. reiner Scan oder schreibgeschützt)
+      if (!parsedText || parsedText.trim().length < 20) {
+        parsedText = `[HINWEIS: Aus der Datei ${file.name} konnte kein Fließtext extrahiert werden. Es handelt sich möglicherweise um einen Bild-Scan.]`;
+      }
 
       return {
         name: file.name,
         buffer,
         type: file.type || "application/pdf",
-        text: pdfData.text || "",
+        text: parsedText,
       };
     });
 
@@ -391,7 +406,7 @@ export async function POST(request: NextRequest) {
       finalDealTitle,
     );
 
-    // 💥 Sofortige HTTP-Antwort in ~1-2 Sekunden (Kein Vercel-Timeout möglich!)
+    // 💥 Sofortige HTTP-Antwort in ~1-2 Sekunden
     return NextResponse.json(
       {
         success: true,
