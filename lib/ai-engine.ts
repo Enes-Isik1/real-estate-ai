@@ -171,26 +171,24 @@ export function calculateMultiFactorScore(coreAnalysis: any) {
 
   const baseScore = sanitizedLeadScore;
 
+  // Unterlagen-Vollständigkeit: Orientiert sich am Base Score, sinkt pro fehlendem Dokument
   const documentCompletenessScore = Math.min(
     100,
-    Math.max(15, Math.round((100 - missingCount * 25) * 0.4 + baseScore * 0.6)),
+    Math.max(15, Math.round(baseScore - missingCount * 15)),
   );
+
+  // Risiko- & Lastenfreiheit: Orientiert sich am Base Score, sinkt pro Risiko/Konflikt
   const riskSafetyScore = Math.min(
     100,
-    Math.max(
-      15,
-      Math.round(
-        (100 - riskCount * 25 - conflictCount * 35) * 0.4 + baseScore * 0.6,
-      ),
-    ),
+    Math.max(15, Math.round(baseScore - riskCount * 15 - conflictCount * 20)),
   );
+
+  // Rechtliche Konsistenz: Orientiert sich am Base Score, sinkt stark bei Konflikten
   const legalComplianceScore = Math.min(
     100,
-    Math.max(
-      15,
-      Math.round((conflictCount === 0 ? 90 : 40) * 0.4 + baseScore * 0.6),
-    ),
+    Math.max(15, Math.round(baseScore - conflictCount * 25)),
   );
+
   const financialClarityScore = baseScore;
 
   return {
