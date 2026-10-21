@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Sparkles,
   CheckCircle2,
@@ -9,10 +9,6 @@ import {
   XCircle,
   TrendingUp,
   ShieldAlert,
-  FileCheck,
-  Mail,
-  CalendarDays,
-  FileQuestion,
   Scale,
   FileText,
 } from "lucide-react";
@@ -114,6 +110,7 @@ interface DecisionCenterProps {
       };
     };
     overallRecommendation?: string;
+    nextActions?: string[]; // 👈 Hier kommen die dynamischen Schritte der KI an
   };
   risks?: any[];
 }
@@ -122,11 +119,9 @@ export default function DecisionCenter({
   analysis,
   risks = [],
 }: DecisionCenterProps) {
-  // Dynamischer Score und Multi-Faktor Daten aus dem Backend
   const score = analysis?.leadScore ?? 85;
   const multiFactor = analysis?.multiFactorScore;
 
-  // Automatische Bestimmung des Recommendation-Typs basierend auf Score/Risiken
   let currentRecommendation: RecommendationType = "Proceed with Conditions";
   if (score >= 85 && risks.length === 0) currentRecommendation = "Proceed";
   else if (score < 50) currentRecommendation = "High Risk";
@@ -134,7 +129,6 @@ export default function DecisionCenter({
 
   const recommendation = recommendationConfig[currentRecommendation];
 
-  // Metriken basierend auf echten Multi-Faktor Daten (mit Fallbacks)
   const metrics = [
     {
       label: "Overall Deal Score",
@@ -166,32 +160,28 @@ export default function DecisionCenter({
     },
   ];
 
-  const [actions, setActions] = useState([
-    {
-      id: "action-1",
-      text: "Energieausweis anfordern",
-      completed: false,
-      icon: <FileQuestion className="w-4 h-4" />,
-    },
-    {
-      id: "action-2",
-      text: "Grundbuch-Klauseln prüfen",
-      completed: false,
-      icon: <AlertTriangle className="w-4 h-4" />,
-    },
-    {
-      id: "action-3",
-      text: "Follow-up Termin einstellen",
-      completed: false,
-      icon: <CalendarDays className="w-4 h-4" />,
-    },
-    {
-      id: "action-4",
-      text: "Käufer-Update senden",
-      completed: false,
-      icon: <Mail className="w-4 h-4" />,
-    },
-  ]);
+  // 🔄 Dynamische Befüllung der Nächsten Schritte aus der KI-Analyse
+  const [actions, setActions] = useState<
+    Array<{ id: string; text: string; completed: boolean }>
+  >([]);
+
+  useEffect(() => {
+    if (analysis?.nextActions && analysis.nextActions.length > 0) {
+      setActions(
+        analysis.nextActions.map((actionText, index) => ({
+          id: `action-${index}`,
+          text: actionText,
+          completed: false,
+        })),
+      );
+    } else {
+      // Fallback, falls die KI keine Schritte liefert
+      setActions([
+        { id: "action-1", text: "Energieausweis anfordern", completed: false },
+        { id: "action-2", text: "Grundbuch-Klauseln prüfen", completed: false },
+      ]);
+    }
+  }, [analysis]);
 
   const toggleAction = (id: string) => {
     setActions((prev) =>
@@ -264,7 +254,7 @@ export default function DecisionCenter({
         {/* Interactive Recommended Actions */}
         <div className="lg:col-span-6 bg-slate-50/40 border border-gray-150/50 rounded-2xl p-5 space-y-3.5">
           <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">
-            Empfohlene Makler-Nächste Schritte
+            Empfohlene Makler-Nächste Schritte (KI-Generiert)
           </span>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -286,7 +276,7 @@ export default function DecisionCenter({
                         : "bg-slate-100 text-gray-400 group-hover:text-indigo-500 group-hover:bg-indigo-50"
                     }`}
                   >
-                    {action.icon}
+                    <FileText className="w-4 h-4" />
                   </div>
                   <span
                     className={`text-xs font-bold truncate ${action.completed ? "line-through text-emerald-700/70" : ""}`}
