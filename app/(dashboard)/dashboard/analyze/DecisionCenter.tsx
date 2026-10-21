@@ -78,6 +78,7 @@ const recommendationConfig: Record<RecommendationType, RecommendationStyle> = {
 };
 
 interface DecisionCenterProps {
+  score?: number; // 👈 Neu hinzugefügt für den echten Deal-Score
   analysis?: {
     leadScore?: number;
     multiFactorScore?: {
@@ -110,16 +111,18 @@ interface DecisionCenterProps {
       };
     };
     overallRecommendation?: string;
-    nextActions?: string[]; // 👈 Hier kommen die dynamischen Schritte der KI an
+    nextActions?: any[];
   };
   risks?: any[];
 }
 
 export default function DecisionCenter({
+  score: propScore,
   analysis,
   risks = [],
 }: DecisionCenterProps) {
-  const score = analysis?.leadScore ?? 85;
+  // Holt den Score flexibel: Entweder direkt übergeben, von der KI, oder 50 als Fallback
+  const score = propScore ?? analysis?.leadScore ?? 50;
   const multiFactor = analysis?.multiFactorScore;
 
   let currentRecommendation: RecommendationType = "Proceed with Conditions";
@@ -168,14 +171,17 @@ export default function DecisionCenter({
   useEffect(() => {
     if (analysis?.nextActions && analysis.nextActions.length > 0) {
       setActions(
-        analysis.nextActions.map((actionText, index) => ({
+        analysis.nextActions.map((action, index) => ({
           id: `action-${index}`,
-          text: actionText,
+          // Prüft, ob das Element ein Objekt mit .text ist oder direkt ein String
+          text:
+            typeof action === "object" && action !== null
+              ? action.text
+              : String(action),
           completed: false,
         })),
       );
     } else {
-      // Fallback, falls die KI keine Schritte liefert
       setActions([
         { id: "action-1", text: "Energieausweis anfordern", completed: false },
         { id: "action-2", text: "Grundbuch-Klauseln prüfen", completed: false },

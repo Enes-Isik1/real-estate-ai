@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/utils/supabase/client";
+import DecisionCenter from "@/app/(dashboard)/dashboard/analyze/DecisionCenter";
 import {
   ArrowLeft,
   Sparkles,
@@ -606,6 +607,13 @@ export default function DealDetailPage() {
           </button>
         </div>
       </div>
+
+      {/* 1. Das DecisionCenter ganz oben platzieren */}
+      <DecisionCenter
+        score={deal.score}
+        analysis={deal.analysis}
+        risks={risksList}
+      />
 
       {/* Analyse Ergebnisse (2-Spalten-Grid) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
