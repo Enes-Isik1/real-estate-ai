@@ -5,7 +5,7 @@ const API_KEY = process.env.GEMINI_API_KEY;
 
 // Enterprise Fallback-Hierarchie für Modelle (aktuelle v1beta kompatible Modellnamen)
 const PRIMARY_MODEL = "gemini-1.5-flash";
-const FALLBACK_MODELS = ["gemini-1.5-flash-latest"];
+const FALLBACK_MODELS = [];
 
 /**
  * Extrem kompakter Filter für das Free Tier, um Token-Limits (TPM) nicht zu sprengen.
