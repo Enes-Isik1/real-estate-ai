@@ -201,20 +201,39 @@ export async function POST(request: NextRequest) {
     const sanitizedLeadScore = Math.round(Number(coreAnalysis.leadScore) || 50);
     const finalStatus = sanitizedLeadScore > 70 ? "Ready" : "Needs Review";
 
-    // --- PUNKT 15: TRANSPARENTER MULTI-FAKTOR DEAL SCORE ---
-    // Berechnung der Teil-Scores basierend auf den Analyseergebnissen
+    // --- PUNKT 15: TRANSPARENTER MULTI-FAKTOR DEAL SCORE (INTELLIGENT GEWICHTET) ---
     const riskCount = (coreAnalysis.topRisks || []).length;
     const missingCount = (coreAnalysis.missingDocuments || []).length;
     const conflictCount = (coreAnalysis.crossDocumentConflicts || []).length;
 
-    const documentCompletenessScore = Math.max(20, 100 - missingCount * 20);
-    const riskSafetyScore = Math.max(
-      10,
-      100 - riskCount * 15 - conflictCount * 25,
+    const baseScore = sanitizedLeadScore;
+
+    // Wir gewichten die harten Fakten (Risiken/Fehlende Docs) mit dem echten Gesamt-Score,
+    // damit die Unter-Scores niemals massiv im Widerspruch zum Overall Score stehen.
+    const documentCompletenessScore = Math.min(
+      100,
+      Math.max(
+        15,
+        Math.round((100 - missingCount * 25) * 0.4 + baseScore * 0.6),
+      ),
     );
-    const legalComplianceScore =
-      conflictCount === 0 ? 95 : Math.max(30, 95 - conflictCount * 30);
-    const financialClarityScore = sanitizedLeadScore; // Basiswert
+    const riskSafetyScore = Math.min(
+      100,
+      Math.max(
+        15,
+        Math.round(
+          (100 - riskCount * 25 - conflictCount * 35) * 0.4 + baseScore * 0.6,
+        ),
+      ),
+    );
+    const legalComplianceScore = Math.min(
+      100,
+      Math.max(
+        15,
+        Math.round((conflictCount === 0 ? 90 : 40) * 0.4 + baseScore * 0.6),
+      ),
+    );
+    const financialClarityScore = baseScore;
 
     const multiFactorScore = {
       overallScore: sanitizedLeadScore,
@@ -224,27 +243,27 @@ export async function POST(request: NextRequest) {
           weight: "30%",
           label: "Unterlagen-Vollständigkeit",
           description:
-            missingCount === 0
+            missingCount === 0 && documentCompletenessScore > 70
               ? "Alle Pflichtdokumente vorhanden."
-              : `${missingCount} Dokument(e) fehlen noch.`,
+              : `${missingCount} Dokument(e) fehlen oder unvollständig.`,
         },
         riskSafety: {
           score: riskSafetyScore,
           weight: "30%",
           label: "Risiko- & Lastenfreiheit",
           description:
-            riskCount === 0
-              ? "Keine schweren Lasten oder Risiken."
-              : `${riskCount} potenzielle Risiken identifiziert.`,
+            riskCount === 0 && riskSafetyScore > 70
+              ? "Keine schweren Lasten erkannt."
+              : `${riskCount} Risiken / Belastungen identifiziert.`,
         },
         legalCompliance: {
           score: legalComplianceScore,
           weight: "20%",
           label: "Rechtliche Konsistenz",
           description:
-            conflictCount === 0
+            conflictCount === 0 && legalComplianceScore > 70
               ? "Keine Widersprüche in den Akten."
-              : `${conflictCount} Widerspruch/-sprüche zwischen Dokumenten.`,
+              : `${conflictCount} rechtliche Unstimmigkeiten entdeckt.`,
         },
         financialClarity: {
           score: financialClarityScore,
