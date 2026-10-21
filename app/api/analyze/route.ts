@@ -8,24 +8,276 @@ import { createClient } from "@/lib/utils/supabase/server";
 import * as Sentry from "@sentry/nextjs";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // Sicherheitspuffer für Next.js
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB Limit
 
+/**
+ * Enterprise Asynchrones Background-Processing für Analysen
+ */
+async function processAnalysisInBackground(
+  jobId: string,
+  dealId: string,
+  structuredContext: string,
+  fileBuffers: { name: string; buffer: Buffer; type: string }[],
+  user: any,
+  fileNames: string[],
+  allChunks: any[],
+  finalDealTitle: string,
+) {
+  try {
+    console.log(`[Job ${jobId}] 🚀 Starte Hintergrund-Analyse...`);
+
+    // 1. Job-Status auf "processing" setzen
+    await supabaseAdmin
+      .from("jobs")
+      .update({ status: "processing", updated_at: new Date().toISOString() })
+      .eq("id", jobId);
+
+    // 2. KI-Analyse mit sicherem Context aufrufen
+    const safeStructuredContext =
+      structuredContext.length > 8000
+        ? structuredContext.substring(0, 8000)
+        : structuredContext;
+
+    const coreAnalysis = await analyzeCoreData(safeStructuredContext);
+
+    if (!coreAnalysis || typeof coreAnalysis.leadScore !== "number") {
+      throw new Error("Valide KI-Analyse konnte nicht generiert werden.");
+    }
+
+    const sanitizedLeadScore = Math.round(Number(coreAnalysis.leadScore) || 50);
+    const finalStatus = sanitizedLeadScore > 70 ? "Ready" : "Needs Review";
+
+    // 3. Multi-Faktor Sub-Scores berechnen
+    const riskCount = (coreAnalysis.topRisks || []).length;
+    const missingCount = (coreAnalysis.missingDocuments || []).length;
+    const conflictCount = (coreAnalysis.crossDocumentConflicts || []).length;
+
+    const baseScore = sanitizedLeadScore;
+
+    const documentCompletenessScore = Math.min(
+      100,
+      Math.max(
+        15,
+        Math.round((100 - missingCount * 25) * 0.4 + baseScore * 0.6),
+      ),
+    );
+    const riskSafetyScore = Math.min(
+      100,
+      Math.max(
+        15,
+        Math.round(
+          (100 - riskCount * 25 - conflictCount * 35) * 0.4 + baseScore * 0.6,
+        ),
+      ),
+    );
+    const legalComplianceScore = Math.min(
+      100,
+      Math.max(
+        15,
+        Math.round((conflictCount === 0 ? 90 : 40) * 0.4 + baseScore * 0.6),
+      ),
+    );
+    const financialClarityScore = baseScore;
+
+    const multiFactorScore = {
+      overallScore: sanitizedLeadScore,
+      breakdown: {
+        documentCompleteness: {
+          score: documentCompletenessScore,
+          weight: "30%",
+          label: "Unterlagen-Vollständigkeit",
+          description:
+            missingCount === 0 && documentCompletenessScore > 70
+              ? "Alle Pflichtdokumente vorhanden."
+              : `${missingCount} Dokument(e) fehlen oder unvollständig.`,
+        },
+        riskSafety: {
+          score: riskSafetyScore,
+          weight: "30%",
+          label: "Risiko- & Lastenfreiheit",
+          description:
+            riskCount === 0 && riskSafetyScore > 70
+              ? "Keine schweren Lasten erkannt."
+              : `${riskCount} Risiken / Belastungen identifiziert.`,
+        },
+        legalCompliance: {
+          score: legalComplianceScore,
+          weight: "20%",
+          label: "Rechtliche Konsistency",
+          description:
+            conflictCount === 0 && legalComplianceScore > 70
+              ? "Keine Widersprüche in den Akten."
+              : `${conflictCount} rechtliche Unstimmigkeiten entdeckt.`,
+        },
+        financialClarity: {
+          score: financialClarityScore,
+          weight: "20%",
+          label: "Deal-Attraktivität & Rendite",
+          description: "Basierend auf Kaufpreis, Objektzustand und Marktdaten.",
+        },
+      },
+    };
+
+    const aiAnalysis = {
+      leadScore: sanitizedLeadScore,
+      multiFactorScore,
+      executiveSummary:
+        coreAnalysis.executiveSummary || "Keine Zusammenfassung verfügbar.",
+      overallRecommendation:
+        coreAnalysis.overallRecommendation || "Solides Objekt.",
+      confidence: coreAnalysis.confidence || 0.9,
+      verificationRequired: coreAnalysis.verificationRequired || false,
+      topRisks: coreAnalysis.topRisks || [],
+      crossDocumentConflicts: coreAnalysis.crossDocumentConflicts || [],
+      nextActions: coreAnalysis.nextActions || [],
+      positiveFindings: coreAnalysis.positiveFindings || [],
+      missingDocuments: coreAnalysis.missingDocuments || [],
+      negotiationPoints: coreAnalysis.negotiationPoints || [],
+      sellerQuestions: coreAnalysis.sellerQuestions || [],
+      timeline: coreAnalysis.timeline || [],
+    };
+
+    // 4. Dokumente in Storage & DB verankern
+    const documentInserts = [];
+    const bucketName = "deal-documents";
+
+    for (const fileObj of fileBuffers) {
+      const uniqueFileName = `${dealId}/${Date.now()}_${fileObj.name}`;
+
+      const { error: storageError } = await supabaseAdmin.storage
+        .from(bucketName)
+        .upload(uniqueFileName, fileObj.buffer, {
+          contentType: fileObj.type,
+          upsert: true,
+        });
+
+      let publicUrl = null;
+      if (!storageError) {
+        const { data: urlData } = supabaseAdmin.storage
+          .from(bucketName)
+          .getPublicUrl(uniqueFileName);
+        publicUrl = urlData?.publicUrl || null;
+      }
+
+      const matchedDoc = coreAnalysis.classifiedDocuments?.find(
+        (d: any) => d.filename === fileObj.name,
+      );
+
+      documentInserts.push({
+        deal_id: dealId,
+        filename: fileObj.name,
+        document_type: matchedDoc?.detectedType || "Sonstiges",
+        storage_path: uniqueFileName,
+        public_url: publicUrl,
+        upload_date: new Date().toISOString(),
+      });
+    }
+
+    if (documentInserts.length > 0) {
+      await supabaseAdmin.from("documents").insert(documentInserts);
+    }
+
+    // 5. Analyse in DB speichern
+    const { count: existingAnalysesCount } = await supabaseAdmin
+      .from("analyses")
+      .select("*", { count: "exact", head: true })
+      .eq("deal_id", dealId);
+
+    const nextVersion = (existingAnalysesCount || 0) + 1;
+
+    const { data: savedAnalysis, error: analysisError } = await supabaseAdmin
+      .from("analyses")
+      .insert([
+        {
+          deal_id: dealId,
+          version: nextVersion,
+          lead_score: sanitizedLeadScore,
+          executive_summary: aiAnalysis.executiveSummary,
+          overall_recommendation: aiAnalysis.overallRecommendation,
+          raw_json: aiAnalysis,
+        },
+      ])
+      .select()
+      .single();
+
+    if (analysisError) throw analysisError;
+
+    // 6. Risiken speichern
+    if (
+      aiAnalysis.topRisks &&
+      aiAnalysis.topRisks.length > 0 &&
+      savedAnalysis
+    ) {
+      const riskInserts = aiAnalysis.topRisks.map((risk: any) => {
+        const rawPage = risk.source?.pageNumber || risk.page || 1;
+        const parsedPage =
+          typeof rawPage === "number" ? rawPage : parseInt(rawPage);
+
+        return {
+          analysis_id: savedAnalysis.id,
+          deal_id: dealId,
+          severity: risk.severity || "Medium",
+          title: risk.title,
+          why_it_matters: risk.whyItMatters,
+          confidence: risk.confidence || 90,
+          page_number: isNaN(parsedPage) ? 1 : parsedPage,
+        };
+      });
+
+      await supabaseAdmin.from("risks").insert(riskInserts);
+    }
+
+    // 7. Deal Status aktualisieren
+    await supabaseAdmin
+      .from("deals")
+      .update({ status: finalStatus })
+      .eq("id", dealId);
+
+    // 8. Job als abgeschlossen markieren
+    await supabaseAdmin
+      .from("jobs")
+      .update({
+        status: "completed",
+        result: {
+          dealId,
+          leadScore: sanitizedLeadScore,
+          status: finalStatus,
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", jobId);
+
+    console.log(
+      `[Job ${jobId}] ✅ Hintergrund-Analyse ERFOLGREICH abgeschlossen!`,
+    );
+  } catch (err: any) {
+    console.error(`[Job ${jobId}] 🔥 FEHLER in Hintergrund-Analyse:`, err);
+    Sentry.captureException(err);
+
+    await supabaseAdmin
+      .from("deals")
+      .update({ status: "Error" })
+      .eq("id", dealId);
+
+    await supabaseAdmin
+      .from("jobs")
+      .update({
+        status: "failed",
+        error_message: err?.message || "Analyse fehlgeschlagen.",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", jobId);
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
-    // 1. Direkt am Anfang authentifizieren und Loggen
     const supabaseClient = await createClient();
     const {
       data: { user },
       error: userError,
     } = await supabaseClient.auth.getUser();
-
-    console.log("🔍 DEBUG AUTH IN ROUTE:", {
-      userId: user?.id,
-      email: user?.email,
-      error: userError,
-    });
 
     if (userError || !user) {
       return NextResponse.json(
@@ -35,21 +287,17 @@ export async function POST(request: NextRequest) {
     }
 
     const formData = await request.formData();
-
-    // Formulardaten auslesen
     const formTitle = formData.get("title")?.toString().trim();
     const formClientName = formData.get("clientName")?.toString().trim();
     const formClientEmail = formData.get("clientEmail")?.toString().trim();
     const existingDealId = formData.get("dealId")?.toString().trim();
 
-    // Wir fangen sowohl "file" als auch "files" ab
     const rawFiles =
       formData.getAll("file").length > 0
         ? formData.getAll("file")
         : formData.getAll("files");
 
     const files = rawFiles as File[];
-    console.log("🔍 Anzahl gefundener Dateien im Backend:", files.length);
 
     if (files.length === 0) {
       return NextResponse.json(
@@ -63,7 +311,7 @@ export async function POST(request: NextRequest) {
     const allChunks: any[] = [];
     const fileBuffers: { name: string; buffer: Buffer; type: string }[] = [];
 
-    // --- OPTIMIERTES PARALLELES PDF-PARSEN & BUFFER SPEICHERN ---
+    // Paralelles PDF-Parsing
     const fileProcessingPromises = files.map(async (file) => {
       if (file.size > MAX_FILE_SIZE) {
         throw new Error(`Datei ${file.name} ist zu groß (max 10MB).`);
@@ -74,9 +322,6 @@ export async function POST(request: NextRequest) {
       const fileHeader = buffer.toString("utf8", 0, 20);
 
       if (!fileHeader.includes("PDF") && !fileHeader.includes("pdf")) {
-        console.warn(
-          `Überspringe Datei ${file.name}, da kein PDF-Header gefunden wurde.`,
-        );
         return null;
       }
 
@@ -138,132 +383,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log("🚀 Starte Blitz-Analyse mit der KI...");
-    const startTime = Date.now();
-
-    // 🛡️ HOBBY PLAN OPTIMIERUNG: Text auf max. 4.000 Zeichen begrenzen für maximale Geschwindigkeit
-    const safeStructuredContext =
-      structuredContext.length > 4000
-        ? structuredContext.substring(0, 4000)
-        : structuredContext;
-
-    // Direkt 1 einzelner, schneller Durchlauf ohne zeitraubende Retry-Schleife
-    const coreAnalysis = await analyzeCoreData(safeStructuredContext);
-
-    if (!coreAnalysis || typeof coreAnalysis.leadScore !== "number") {
-      return NextResponse.json(
-        {
-          error:
-            "Die KI konnte kein valides Analyseergebnis generieren. Bitte versuchen Sie es erneut.",
-        },
-        { status: 500 },
-      );
-    }
-
-    console.log(
-      `⚡ KI-Analyse erfolgreich in ${Date.now() - startTime}ms abgeschlossen.`,
-    );
-
-    const sanitizedLeadScore = Math.round(Number(coreAnalysis.leadScore) || 50);
-    const finalStatus = sanitizedLeadScore > 70 ? "Ready" : "Needs Review";
-
-    // --- PUNKT 15: TRANSPARENTER MULTI-FAKTOR DEAL SCORE (INTELLIGENT GEWICHTET) ---
-    const riskCount = (coreAnalysis.topRisks || []).length;
-    const missingCount = (coreAnalysis.missingDocuments || []).length;
-    const conflictCount = (coreAnalysis.crossDocumentConflicts || []).length;
-
-    const baseScore = sanitizedLeadScore;
-
-    // Wir gewichten die harten Fakten (Risiken/Fehlende Docs) mit dem echten Gesamt-Score,
-    // damit die Unter-Scores niemals massiv im Widerspruch zum Overall Score stehen.
-    const documentCompletenessScore = Math.min(
-      100,
-      Math.max(
-        15,
-        Math.round((100 - missingCount * 25) * 0.4 + baseScore * 0.6),
-      ),
-    );
-    const riskSafetyScore = Math.min(
-      100,
-      Math.max(
-        15,
-        Math.round(
-          (100 - riskCount * 25 - conflictCount * 35) * 0.4 + baseScore * 0.6,
-        ),
-      ),
-    );
-    const legalComplianceScore = Math.min(
-      100,
-      Math.max(
-        15,
-        Math.round((conflictCount === 0 ? 90 : 40) * 0.4 + baseScore * 0.6),
-      ),
-    );
-    const financialClarityScore = baseScore;
-
-    const multiFactorScore = {
-      overallScore: sanitizedLeadScore,
-      breakdown: {
-        documentCompleteness: {
-          score: documentCompletenessScore,
-          weight: "30%",
-          label: "Unterlagen-Vollständigkeit",
-          description:
-            missingCount === 0 && documentCompletenessScore > 70
-              ? "Alle Pflichtdokumente vorhanden."
-              : `${missingCount} Dokument(e) fehlen oder unvollständig.`,
-        },
-        riskSafety: {
-          score: riskSafetyScore,
-          weight: "30%",
-          label: "Risiko- & Lastenfreiheit",
-          description:
-            riskCount === 0 && riskSafetyScore > 70
-              ? "Keine schweren Lasten erkannt."
-              : `${riskCount} Risiken / Belastungen identifiziert.`,
-        },
-        legalCompliance: {
-          score: legalComplianceScore,
-          weight: "20%",
-          label: "Rechtliche Konsistenz",
-          description:
-            conflictCount === 0 && legalComplianceScore > 70
-              ? "Keine Widersprüche in den Akten."
-              : `${conflictCount} rechtliche Unstimmigkeiten entdeckt.`,
-        },
-        financialClarity: {
-          score: financialClarityScore,
-          weight: "20%",
-          label: "Deal-Attraktivität & Rendite",
-          description: "Basierend auf Kaufpreis, Objektzustand und Marktdaten.",
-        },
-      },
-    };
-
-    const aiAnalysis = {
-      leadScore: sanitizedLeadScore,
-      multiFactorScore, // Hinzugefügt für Punkt 15
-      executiveSummary:
-        coreAnalysis.executiveSummary || "Keine Zusammenfassung verfügbar.",
-      overallRecommendation:
-        coreAnalysis.overallRecommendation || "Solides Objekt.",
-      confidence: coreAnalysis.confidence || 0.9,
-      verificationRequired: coreAnalysis.verificationRequired || false,
-      topRisks: coreAnalysis.topRisks || [],
-      crossDocumentConflicts: coreAnalysis.crossDocumentConflicts || [],
-      nextActions: coreAnalysis.nextActions || [],
-      positiveFindings: coreAnalysis.positiveFindings || [],
-      missingDocuments: coreAnalysis.missingDocuments || [],
-      negotiationPoints: coreAnalysis.negotiationPoints || [],
-      sellerQuestions: coreAnalysis.sellerQuestions || [],
-      timeline: coreAnalysis.timeline || [],
-    };
-
     let dealId = existingDealId || null;
     let finalDealTitle = formTitle || "Neue Immobilie";
 
     if (dealId) {
-      console.log(`🔄 Aktualisiere bestehenden Deal ID: ${dealId}`);
       const { data: existingDeal, error: fetchError } = await supabaseAdmin
         .from("deals")
         .select("title")
@@ -279,7 +402,6 @@ export async function POST(request: NextRequest) {
 
       finalDealTitle = existingDeal.title;
 
-      // Status während der neuen Analyse auf "Analyzing" setzen
       await supabaseAdmin
         .from("deals")
         .update({ status: "Analyzing" })
@@ -305,163 +427,56 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (dealError) {
-        console.error(
-          "🔥 Fehler beim Speichern des Deals in Supabase:",
-          dealError,
-        );
-        throw new Error(
-          "Datenbankfehler beim Anlegen des Deals: " + dealError.message,
-        );
+        throw new Error("Datenbankfehler: " + dealError.message);
       }
 
       dealId = newDeal.id;
+    }
 
-      await supabaseAdmin.from("jobs").insert([
+    // 🚀 Job in Supabase anlegen
+    const { data: job, error: jobError } = await supabaseAdmin
+      .from("jobs")
+      .insert([
         {
           deal_id: dealId,
-          status: "completed",
+          status: "pending",
         },
-      ]);
-    }
+      ])
+      .select()
+      .single();
 
-    if (dealId) {
-      // --- PUNKT 14: SUPABASE STORAGE UPLOAD FÜR ORIGINAL-PDFs ---
-      const documentInserts = [];
-      const bucketName = "deal-documents"; // Stelle sicher, dass dieser Bucket in Supabase existiert
+    if (jobError) throw jobError;
 
-      for (const fileObj of fileBuffers) {
-        const uniqueFileName = `${dealId}/${Date.now()}_${fileObj.name}`;
+    // ⚡ Vercel / Node non-blocking execution anstoßen
+    processAnalysisInBackground(
+      job.id,
+      dealId!,
+      structuredContext,
+      fileBuffers,
+      user,
+      fileNames,
+      allChunks,
+      finalDealTitle,
+    );
 
-        const { error: storageError } = await supabaseAdmin.storage
-          .from(bucketName)
-          .upload(uniqueFileName, fileObj.buffer, {
-            contentType: fileObj.type,
-            upsert: true,
-          });
-
-        let publicUrl = null;
-        if (!storageError) {
-          const { data: urlData } = supabaseAdmin.storage
-            .from(bucketName)
-            .getPublicUrl(uniqueFileName);
-          publicUrl = urlData?.publicUrl || null;
-        } else {
-          console.warn(
-            `⚠️ Supabase Storage Upload Warnung für ${fileObj.name}:`,
-            storageError.message,
-          );
-        }
-
-        const matchedDoc = coreAnalysis.classifiedDocuments?.find(
-          (d: any) => d.filename === fileObj.name,
-        );
-
-        documentInserts.push({
-          deal_id: dealId,
-          filename: fileObj.name,
-          document_type: matchedDoc?.detectedType || "Sonstiges",
-          storage_path: uniqueFileName,
-          public_url: publicUrl,
-          upload_date: new Date().toISOString(),
-        });
-      }
-
-      await supabaseAdmin.from("documents").insert(documentInserts);
-
-      // Versionsnummer ermitteln
-      const { count: existingAnalysesCount } = await supabaseAdmin
-        .from("analyses")
-        .select("*", { count: "exact", head: true })
-        .eq("deal_id", dealId);
-
-      const nextVersion = (existingAnalysesCount || 0) + 1;
-
-      // Analyseergebnis speichern
-      const { data: savedAnalysis, error: analysisError } = await supabaseAdmin
-        .from("analyses")
-        .insert([
-          {
-            deal_id: dealId,
-            version: nextVersion,
-            lead_score: sanitizedLeadScore,
-            executive_summary: aiAnalysis.executiveSummary,
-            overall_recommendation: aiAnalysis.overallRecommendation,
-            raw_json: aiAnalysis,
-          },
-        ])
-        .select()
-        .single();
-
-      if (analysisError) {
-        console.error("🔥 Fehler beim Speichern der Analyse:", analysisError);
-        throw analysisError;
-      }
-
-      // Risiken abspeichern
-      if (
-        aiAnalysis.topRisks &&
-        aiAnalysis.topRisks.length > 0 &&
-        savedAnalysis
-      ) {
-        const riskInserts = aiAnalysis.topRisks.map((risk: any) => {
-          const rawPage = risk.source?.pageNumber || risk.page || 1;
-          const parsedPage =
-            typeof rawPage === "number" ? rawPage : parseInt(rawPage);
-
-          return {
-            analysis_id: savedAnalysis.id,
-            deal_id: dealId,
-            severity: risk.severity || "Medium",
-            title: risk.title,
-            why_it_matters: risk.whyItMatters,
-            confidence: risk.confidence || 90,
-            page_number: isNaN(parsedPage) ? 1 : parsedPage,
-          };
-        });
-
-        await supabaseAdmin.from("risks").insert(riskInserts);
-      }
-    }
-
-    await supabaseAdmin
-      .from("deals")
-      .update({ status: finalStatus })
-      .eq("id", dealId);
-
-    const propertyAsset: PropertyAsset = {
-      id: dealId!,
-      name: finalDealTitle,
-      createdAt: new Date().toISOString(),
-      files: fileNames,
-      analysis: aiAnalysis,
-      timeline: aiAnalysis.timeline || [],
-      decisionCenter: {
-        score: sanitizedLeadScore,
-        status: finalStatus,
-        summary: aiAnalysis.overallRecommendation,
+    // 💥 Sofortige HTTP-Antwort in ~1-2 Sekunden (Kein Vercel-Timeout möglich!)
+    return NextResponse.json(
+      {
+        success: true,
+        async: true,
+        jobId: job.id,
+        dealId: dealId,
+        message: "Analyse wurde im Hintergrund gestartet.",
       },
-    };
-
-    return NextResponse.json({
-      success: true,
-      property: propertyAsset,
-      chunks: allChunks,
-    });
+      { status: 202 },
+    );
   } catch (error: any) {
     console.error("🔥 KRITISCHER API-FEHLER:", error);
-
     Sentry.captureException(error);
 
-    let errorMessage =
-      "Die Analyse konnte nicht abgeschlossen werden. Bitte versuchen Sie es erneut.";
-
-    if (error?.status === 429) {
-      errorMessage =
-        "Der KI-Dienst ist derzeit überlastet. Bitte versuchen Sie es in wenigen Minuten erneut.";
-    } else if (error?.message) {
-      errorMessage = error.message;
-    }
-
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return NextResponse.json(
+      { error: error?.message || "Fehler beim Starten der Analyse." },
+      { status: 500 },
+    );
   }
 }

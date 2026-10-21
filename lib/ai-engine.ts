@@ -1,13 +1,16 @@
+// lib/ai-engine.ts
 import { AnalysisData } from "./types/analysis";
 
 const API_KEY = process.env.GEMINI_API_KEY;
-const MODEL_NAME = "gemini-3.8-flash";
+
+// Enterprise Fallback-Hierarchie für Modelle
+const PRIMARY_MODEL = "gemini-1.5-flash";
+const FALLBACK_MODELS = ["gemini-1.5-pro", "gemini-2.0-flash"];
 
 /**
  * Extrem kompakter Filter für das Free Tier, um Token-Limits (TPM) nicht zu sprengen.
  */
 function smartFilterDocumentContext(rawText: string): string {
-  // Free Tier Token-Schutz: Maximal 8.000 Zeichen, um Rate-Limits zu umgehen
   if (rawText.length <= 8000) return rawText;
 
   const lines = rawText.split("\n");
@@ -48,17 +51,15 @@ function smartFilterDocumentContext(rawText: string): string {
   return result;
 }
 
-async function callGeminiFreeTier(
+/**
+ * Einzelner API-Aufruf an ein bestimmtes Gemini-Modell
+ */
+async function callGeminiModel(
+  modelName: string,
   prompt: string,
   systemInstruction?: string,
 ): Promise<any> {
-  if (!API_KEY) {
-    throw new Error(
-      "GEMINI_API_KEY ist in den Umgebungsvariablen nicht gesetzt.",
-    );
-  }
-
-  const url = `https://generativelanguage.googleapis.com/v1/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${API_KEY}`;
 
   const payload: Record<string, any> = {
     contents: [
@@ -79,39 +80,161 @@ async function callGeminiFreeTier(
     };
   }
 
-  // Sicherheits-Pause vor jedem Request, um RPM-Limits des Free Tiers zu respektieren
-  await new Promise((res) => setTimeout(res, 2000));
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+  const responseText = await response.text();
 
-    const responseText = await response.text();
-
-    if (!response.ok) {
-      console.error(`❌ GOOGLE API FEHLER (${response.status}):`, responseText);
-      throw new Error(`Google API Error ${response.status}: ${responseText}`);
-    }
-
-    const data = JSON.parse(responseText);
-    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (!rawText) {
-      throw new Error("Die KI hat eine leere Antwort zurückgegeben.");
-    }
-
-    return JSON.parse(rawText);
-  } catch (error: any) {
-    console.error("🔥 KRITISCHER FEHLER IN AI ENGINE:", error.message);
-    throw error;
+  if (!response.ok) {
+    throw new Error(`Google API Error ${response.status}: ${responseText}`);
   }
-} // <--- Diese schließende Klammer hat gefehlt!
+
+  const data = JSON.parse(responseText);
+  const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+  if (!rawText) {
+    throw new Error("Die KI hat eine leere Antwort zurückgegeben.");
+  }
+
+  return JSON.parse(rawText);
+}
+
+/**
+ * Enterprise Resilience Wrapper mit Modell-Fallback & Exponentiellem Backoff bei 503/429
+ */
+async function callGeminiWithFallback(
+  prompt: string,
+  systemInstruction?: string,
+): Promise<any> {
+  if (!API_KEY) {
+    throw new Error(
+      "GEMINI_API_KEY ist in den Umgebungsvariablen nicht gesetzt.",
+    );
+  }
+
+  const modelsToTry = [PRIMARY_MODEL, ...FALLBACK_MODELS];
+  let lastError: any = null;
+
+  for (const model of modelsToTry) {
+    console.log(`🤖 Versuche KI-Analyse mit Modell: ${model}...`);
+    let attempts = 0;
+    const maxAttemptsPerModel = 2;
+
+    while (attempts < maxAttemptsPerModel) {
+      try {
+        attempts++;
+        const result = await callGeminiModel(model, prompt, systemInstruction);
+        console.log(`✅ KI-Analyse erfolgreich mit Modell ${model}!`);
+        return result;
+      } catch (error: any) {
+        lastError = error;
+        const isOverloadedOrRateLimited =
+          error?.message?.includes("503") ||
+          error?.message?.includes("429") ||
+          error?.message?.includes("UNAVAILABLE") ||
+          error?.message?.includes("overloaded");
+
+        console.warn(
+          `⚠️ Modell ${model} Versuch ${attempts} fehlgeschlagen:`,
+          error?.message || error,
+        );
+
+        if (isOverloadedOrRateLimited && attempts < maxAttemptsPerModel) {
+          const backoffMs = attempts * 2000;
+          console.log(`⏳ Warte ${backoffMs}ms vor erneutem Versuch...`);
+          await new Promise((res) => setTimeout(res, backoffMs));
+        } else {
+          // Breche Modell-Versuch ab und wechsele zum Fallback-Modell
+          break;
+        }
+      }
+    }
+
+    console.warn(`🔄 Wechsele auf nächstes Fallback-Modell...`);
+  }
+
+  console.error("🔥 Alle Modell-Fallbacks sind fehlgeschlagen.");
+  throw lastError || new Error("KI-Analyse konnte nicht durchgeführt werden.");
+}
+
+/**
+ * Single Source of Truth: Zentrale Multi-Faktor Sub-Score Berechnung
+ */
+export function calculateMultiFactorScore(coreAnalysis: any) {
+  const sanitizedLeadScore = Math.round(Number(coreAnalysis.leadScore) || 50);
+  const riskCount = (coreAnalysis.topRisks || []).length;
+  const missingCount = (coreAnalysis.missingDocuments || []).length;
+  const conflictCount = (coreAnalysis.crossDocumentConflicts || []).length;
+
+  const baseScore = sanitizedLeadScore;
+
+  const documentCompletenessScore = Math.min(
+    100,
+    Math.max(15, Math.round((100 - missingCount * 25) * 0.4 + baseScore * 0.6)),
+  );
+  const riskSafetyScore = Math.min(
+    100,
+    Math.max(
+      15,
+      Math.round(
+        (100 - riskCount * 25 - conflictCount * 35) * 0.4 + baseScore * 0.6,
+      ),
+    ),
+  );
+  const legalComplianceScore = Math.min(
+    100,
+    Math.max(
+      15,
+      Math.round((conflictCount === 0 ? 90 : 40) * 0.4 + baseScore * 0.6),
+    ),
+  );
+  const financialClarityScore = baseScore;
+
+  return {
+    overallScore: sanitizedLeadScore,
+    breakdown: {
+      documentCompleteness: {
+        score: documentCompletenessScore,
+        weight: "30%",
+        label: "Unterlagen-Vollständigkeit",
+        description:
+          missingCount === 0 && documentCompletenessScore > 70
+            ? "Alle Pflichtdokumente vorhanden."
+            : `${missingCount} Dokument(e) fehlen oder unvollständig.`,
+      },
+      riskSafety: {
+        score: riskSafetyScore,
+        weight: "30%",
+        label: "Risiko- & Lastenfreiheit",
+        description:
+          riskCount === 0 && riskSafetyScore > 70
+            ? "Keine schweren Lasten erkannt."
+            : `${riskCount} Risiken / Belastungen identifiziert.`,
+      },
+      legalCompliance: {
+        score: legalComplianceScore,
+        weight: "20%",
+        label: "Rechtliche Konsistenz",
+        description:
+          conflictCount === 0 && legalComplianceScore > 70
+            ? "Keine Widersprüche in den Akten."
+            : `${conflictCount} rechtliche Unstimmigkeiten entdeckt.`,
+      },
+      financialClarity: {
+        score: financialClarityScore,
+        weight: "20%",
+        label: "Deal-Attraktivität & Rendite",
+        description: "Basierend auf Kaufpreis, Objektzustand und Marktdaten.",
+      },
+    },
+  };
+}
 
 export async function analyzeCoreData(context: string): Promise<AnalysisData> {
-  console.log("🏢 Starte Core-Analyse (Free Tier Modus)...");
+  console.log("🏢 Starte Core-Analyse mit Fallback-Pipeline...");
   const safeContext = smartFilterDocumentContext(context);
 
   const systemInstruction = `Du bist ein deutscher Sachverständiger und WEG-Recht-Experte. Antworte AUSSCHLIESSLICH im validen JSON-Format.`;
@@ -137,18 +260,18 @@ export async function analyzeCoreData(context: string): Promise<AnalysisData> {
     ${safeContext}
   `;
 
-  return await callGeminiFreeTier(prompt, systemInstruction);
+  return await callGeminiWithFallback(prompt, systemInstruction);
 }
 
 export async function analyzeDeepDiveData(
   context: string,
   schemaString: string,
 ): Promise<AnalysisData> {
-  console.log("🔍 Starte Deep Dive (Free Tier Modus)...");
+  console.log("🔍 Starte Deep Dive mit Fallback-Pipeline...");
   const safeContext = smartFilterDocumentContext(context);
 
   const systemInstruction = `Du bist ein Senior Real Estate Analyst. Gib AUSSCHLIESSLICH reines JSON zurück.`;
   const prompt = `Schema: ${schemaString}\n\nDokumente:\n${safeContext}`;
 
-  return await callGeminiFreeTier(prompt, systemInstruction);
+  return await callGeminiWithFallback(prompt, systemInstruction);
 }
