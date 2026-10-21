@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pdf from "pdf-parse-fork";
 import { PropertyAsset } from "@/lib/types/analysis";
 import { supabaseAdmin } from "@/lib/supabase-admin";
-import { analyzeCoreData } from "@/lib/ai-engine";
+import { analyzeCoreData, calculateMultiFactorScore } from "@/lib/ai-engine";
 import { createClient } from "@/lib/utils/supabase/server";
 import * as Sentry from "@sentry/nextjs";
 
@@ -48,76 +48,8 @@ async function processAnalysisInBackground(
     const sanitizedLeadScore = Math.round(Number(coreAnalysis.leadScore) || 50);
     const finalStatus = sanitizedLeadScore > 70 ? "Ready" : "Needs Review";
 
-    // 3. Multi-Faktor Sub-Scores berechnen
-    const riskCount = (coreAnalysis.topRisks || []).length;
-    const missingCount = (coreAnalysis.missingDocuments || []).length;
-    const conflictCount = (coreAnalysis.crossDocumentConflicts || []).length;
-
-    const baseScore = sanitizedLeadScore;
-
-    const documentCompletenessScore = Math.min(
-      100,
-      Math.max(
-        15,
-        Math.round((100 - missingCount * 25) * 0.4 + baseScore * 0.6),
-      ),
-    );
-    const riskSafetyScore = Math.min(
-      100,
-      Math.max(
-        15,
-        Math.round(
-          (100 - riskCount * 25 - conflictCount * 35) * 0.4 + baseScore * 0.6,
-        ),
-      ),
-    );
-    const legalComplianceScore = Math.min(
-      100,
-      Math.max(
-        15,
-        Math.round((conflictCount === 0 ? 90 : 40) * 0.4 + baseScore * 0.6),
-      ),
-    );
-    const financialClarityScore = baseScore;
-
-    const multiFactorScore = {
-      overallScore: sanitizedLeadScore,
-      breakdown: {
-        documentCompleteness: {
-          score: documentCompletenessScore,
-          weight: "30%",
-          label: "Unterlagen-Vollständigkeit",
-          description:
-            missingCount === 0 && documentCompletenessScore > 70
-              ? "Alle Pflichtdokumente vorhanden."
-              : `${missingCount} Dokument(e) fehlen oder unvollständig.`,
-        },
-        riskSafety: {
-          score: riskSafetyScore,
-          weight: "30%",
-          label: "Risiko- & Lastenfreiheit",
-          description:
-            riskCount === 0 && riskSafetyScore > 70
-              ? "Keine schweren Lasten erkannt."
-              : `${riskCount} Risiken / Belastungen identifiziert.`,
-        },
-        legalCompliance: {
-          score: legalComplianceScore,
-          weight: "20%",
-          label: "Rechtliche Konsistency",
-          description:
-            conflictCount === 0 && legalComplianceScore > 70
-              ? "Keine Widersprüche in den Akten."
-              : `${conflictCount} rechtliche Unstimmigkeiten entdeckt.`,
-        },
-        financialClarity: {
-          score: financialClarityScore,
-          weight: "20%",
-          label: "Deal-Attraktivität & Rendite",
-          description: "Basierend auf Kaufpreis, Objektzustand und Marktdaten.",
-        },
-      },
-    };
+    // 3. Multi-Faktor Sub-Scores zentral berechnen (Single Source of Truth)
+    const multiFactorScore = calculateMultiFactorScore(coreAnalysis);
 
     const aiAnalysis = {
       leadScore: sanitizedLeadScore,
