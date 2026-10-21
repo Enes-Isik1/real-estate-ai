@@ -3,9 +3,9 @@ import { AnalysisData } from "./types/analysis";
 
 const API_KEY = process.env.GEMINI_API_KEY;
 
-// Enterprise Fallback-Hierarchie für Modelle
+// Enterprise Fallback-Hierarchie für Modelle (aktuelle v1beta kompatible Modellnamen)
 const PRIMARY_MODEL = "gemini-1.5-flash";
-const FALLBACK_MODELS = ["gemini-1.5-flash"];
+const FALLBACK_MODELS = ["gemini-1.5-flash-latest"];
 
 /**
  * Extrem kompakter Filter für das Free Tier, um Token-Limits (TPM) nicht zu sprengen.
@@ -61,11 +61,15 @@ async function callGeminiModel(
 ): Promise<any> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${API_KEY}`;
 
+  const fullPrompt = systemInstruction
+    ? `${systemInstruction}\n\n${prompt}`
+    : prompt;
+
   const payload: Record<string, any> = {
     contents: [
       {
         role: "user",
-        parts: [{ text: prompt }],
+        parts: [{ text: fullPrompt }],
       },
     ],
     generationConfig: {
@@ -73,12 +77,6 @@ async function callGeminiModel(
       temperature: 0.1,
     },
   };
-
-  if (systemInstruction) {
-    payload.systemInstruction = {
-      parts: [{ text: systemInstruction }],
-    };
-  }
 
   const response = await fetch(url, {
     method: "POST",
@@ -131,23 +129,16 @@ async function callGeminiWithFallback(
         return result;
       } catch (error: any) {
         lastError = error;
-        const isOverloadedOrRateLimited =
-          error?.message?.includes("503") ||
-          error?.message?.includes("429") ||
-          error?.message?.includes("UNAVAILABLE") ||
-          error?.message?.includes("overloaded");
-
         console.warn(
           `⚠️ Modell ${model} Versuch ${attempts} fehlgeschlagen:`,
           error?.message || error,
         );
 
-        if (isOverloadedOrRateLimited && attempts < maxAttemptsPerModel) {
+        if (attempts < maxAttemptsPerModel) {
           const backoffMs = attempts * 2000;
           console.log(`⏳ Warte ${backoffMs}ms vor erneutem Versuch...`);
           await new Promise((res) => setTimeout(res, backoffMs));
         } else {
-          // Breche Modell-Versuch ab und wechsele zum Fallback-Modell
           break;
         }
       }
@@ -171,19 +162,16 @@ export function calculateMultiFactorScore(coreAnalysis: any) {
 
   const baseScore = sanitizedLeadScore;
 
-  // Unterlagen-Vollständigkeit: Orientiert sich am Base Score, sinkt pro fehlendem Dokument
   const documentCompletenessScore = Math.min(
     100,
     Math.max(15, Math.round(baseScore - missingCount * 15)),
   );
 
-  // Risiko- & Lastenfreiheit: Orientiert sich am Base Score, sinkt pro Risiko/Konflikt
   const riskSafetyScore = Math.min(
     100,
     Math.max(15, Math.round(baseScore - riskCount * 15 - conflictCount * 20)),
   );
 
-  // Rechtliche Konsistenz: Orientiert sich am Base Score, sinkt stark bei Konflikten
   const legalComplianceScore = Math.min(
     100,
     Math.max(15, Math.round(baseScore - conflictCount * 25)),
