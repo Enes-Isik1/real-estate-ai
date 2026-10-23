@@ -150,7 +150,7 @@ export function AnalysisProvider({
         );
 
         let attempts = 0;
-        const maxAttempts = 30; // Max ~60 Sekunden warten
+        const maxAttempts = 60; // Max ~60 Sekunden warten
         let jobCompleted = false;
 
         while (attempts < maxAttempts && !jobCompleted) {
