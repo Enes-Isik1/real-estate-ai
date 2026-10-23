@@ -46,6 +46,7 @@ function AnalyzeContent({ dealId }: { dealId?: string }) {
     loadingStep,
     loadingSteps,
     uploadedData,
+    property,
     chunks,
     selectedFiles,
     setSelectedFiles,
@@ -153,11 +154,7 @@ function AnalyzeContent({ dealId }: { dealId?: string }) {
       </div>
 
       <DecisionCenter
-        score={
-          analysis?.leadScore ??
-          uploadedData?.property?.decisionCenter?.score ??
-          50
-        }
+        score={analysis?.leadScore ?? property?.decisionCenter?.score ?? 50}
         analysis={analysis}
         risks={risks}
       />
@@ -196,7 +193,7 @@ function AnalyzeContent({ dealId }: { dealId?: string }) {
             }
             breakdown={analysis?.scoringBreakdown || []}
           />
-          <AuditCard />
+          <AuditCard analysis={analysis} missingDocuments={missingDocuments} />
           <ChatInterface relevantChunks={chunks} />
           <div className="bg-white border border-gray-200/80 rounded-3xl p-6 shadow-enterprise space-y-4">
             <h3 className="font-bold text-gray-900 flex items-center gap-2 text-sm">
