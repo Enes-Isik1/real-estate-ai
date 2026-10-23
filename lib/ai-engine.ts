@@ -1,11 +1,12 @@
 // lib/ai-engine.ts
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { AnalysisData } from "./types/analysis";
 
 const API_KEY = process.env.GEMINI_API_KEY;
+const genAI = new GoogleGenerativeAI(API_KEY || "");
 
-// Nur das stabile Flash-Modell ohne fehleranfällige Fallbacks
-const PRIMARY_MODEL = "gemini-1.5-flash";
-const FALLBACK_MODELS: string[] = [];
+// Stabile Modell-Kaskade über das offizielle SDK
+const MODEL_CANDIDATES = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"];
 
 /**
  * Extrem kompakter Filter für das Free Tier, um Token-Limits (TPM) nicht zu sprengen.
@@ -54,55 +55,43 @@ function smartFilterDocumentContext(rawText: string): string {
 /**
  * Einzelner API-Aufruf an ein bestimmtes Gemini-Modell
  */
+// NEU:
 async function callGeminiModel(
   modelName: string,
   prompt: string,
   systemInstruction?: string,
 ): Promise<any> {
-  const url = `https://generativelanguage.googleapis.com/v1/models/${modelName}:generateContent?key=${API_KEY}`;
-
-  const fullPrompt = systemInstruction
-    ? `${systemInstruction}\n\n${prompt}`
-    : prompt;
-
-  const payload: Record<string, any> = {
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: fullPrompt }],
-      },
-    ],
+  const model = genAI.getGenerativeModel({
+    model: modelName,
+    systemInstruction: systemInstruction,
     generationConfig: {
       responseMimeType: "application/json",
       temperature: 0.1,
     },
-  };
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
   });
 
-  const responseText = await response.text();
-
-  if (!response.ok) {
-    throw new Error(`Google API Error ${response.status}: ${responseText}`);
-  }
-
-  const data = JSON.parse(responseText);
-  const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  const result = await model.generateContent(prompt);
+  const response = await result.response;
+  const rawText = response.text();
 
   if (!rawText) {
     throw new Error("Die KI hat eine leere Antwort zurückgegeben.");
   }
 
-  return JSON.parse(rawText);
+  // Bereinigen von eventuellen Markdown-JSON-Tags
+  const cleanedText = rawText
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/g, "")
+    .trim();
+
+  return JSON.parse(cleanedText);
 }
 
 /**
  * Enterprise Resilience Wrapper mit Modell-Fallback & Exponentiellem Backoff bei 503/429
  */
+// NEU:
 async function callGeminiWithFallback(
   prompt: string,
   systemInstruction?: string,
@@ -113,11 +102,10 @@ async function callGeminiWithFallback(
     );
   }
 
-  const modelsToTry = [PRIMARY_MODEL, ...FALLBACK_MODELS];
   let lastError: any = null;
 
-  for (const model of modelsToTry) {
-    console.log(`🤖 Versuche KI-Analyse mit Modell: ${model}...`);
+  for (const model of MODEL_CANDIDATES) {
+    console.log(`🤖 Versuche KI-Analyse mit SDK-Modell: ${model}...`);
     let attempts = 0;
     const maxAttemptsPerModel = 2;
 
@@ -134,20 +122,19 @@ async function callGeminiWithFallback(
           error?.message || error,
         );
 
+        // Bei Überlastung (503) oder Rate Limits kurz warten
         if (attempts < maxAttemptsPerModel) {
           const backoffMs = attempts * 2000;
           console.log(`⏳ Warte ${backoffMs}ms vor erneutem Versuch...`);
           await new Promise((res) => setTimeout(res, backoffMs));
-        } else {
-          break;
         }
       }
     }
 
-    console.warn(`🔄 Wechsele auf nächstes Fallback-Modell...`);
+    console.warn(`🔄 Wechsele auf nächstes Fallback-Modell in der Kette...`);
   }
 
-  console.error("🔥 Alle Modell-Fallbacks sind fehlgeschlagen.");
+  console.error("🔥 Alle SDK-Modell-Versuche sind fehlgeschlagen.");
   throw lastError || new Error("KI-Analyse konnte nicht durchgeführt werden.");
 }
 
