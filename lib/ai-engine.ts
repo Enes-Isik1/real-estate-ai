@@ -4,7 +4,7 @@ import { AnalysisData } from "./types/analysis";
 const API_KEY = process.env.GEMINI_API_KEY;
 
 // Nur das stabile Flash-Modell ohne fehleranfällige Fallbacks
-const PRIMARY_MODEL = "gemini-1.5-flash";
+const PRIMARY_MODEL = "gemini-flash";
 const FALLBACK_MODELS: string[] = [];
 
 /**
@@ -59,7 +59,7 @@ async function callGeminiModel(
   prompt: string,
   systemInstruction?: string,
 ): Promise<any> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${API_KEY}`;
+  const url = `https://generativelanguage.googleapis.com/v1/models/${modelName}:generateContent?key=${API_KEY}`;
 
   const fullPrompt = systemInstruction
     ? `${systemInstruction}\n\n${prompt}`
