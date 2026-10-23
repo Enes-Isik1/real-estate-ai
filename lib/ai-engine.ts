@@ -6,13 +6,13 @@ const API_KEY = process.env.GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(API_KEY || "");
 
 // Enterprise Modell-Kaskade mit den neuesten Standard-IDs
-const MODEL_CANDIDATES = ["gemini-3.8-flash"];
+const MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-1.5-flash"];
 
 /**
  * Extrem kompakter Filter für das Free Tier, um Token-Limits (TPM) nicht zu sprengen.
  */
 function smartFilterDocumentContext(rawText: string): string {
-  if (rawText.length <= 8000) return rawText;
+  if (rawText.length <= 4000) return rawText;
 
   const lines = rawText.split("\n");
   const relevantKeywords = [
@@ -42,9 +42,9 @@ function smartFilterDocumentContext(rawText: string): string {
   });
 
   const result =
-    filteredLines.length > 30
-      ? filteredLines.join("\n").substring(0, 8000)
-      : rawText.substring(0, 8000);
+    filteredLines.length > 20
+      ? filteredLines.join("\n").substring(0, 4000)
+      : rawText.substring(0, 4000);
 
   console.log(
     `✂️ Free-Tier Filter: Dokument auf ${result.length} Zeichen reduziert.`,
