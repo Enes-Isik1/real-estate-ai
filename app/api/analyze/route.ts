@@ -394,8 +394,8 @@ export async function POST(request: NextRequest) {
 
     if (jobError) throw jobError;
 
-    // ⚡ Vercel / Node non-blocking execution anstoßen
-    await processAnalysisInBackground(
+    // ⚡ Vercel / Node echtes non-blocking Asynchronous Execution (OHNE await!)
+    processAnalysisInBackground(
       job.id,
       dealId!,
       structuredContext,
@@ -404,9 +404,11 @@ export async function POST(request: NextRequest) {
       fileNames,
       allChunks,
       finalDealTitle,
-    );
+    ).catch((err) => {
+      console.error(`[Job ${job.id}] Unhandled background error:`, err);
+    });
 
-    // 💥 Sofortige HTTP-Antwort in ~1-2 Sekunden
+    // 💥 Sofortige HTTP-Antwort in ~1 Sekunde an den Browser
     return NextResponse.json(
       {
         success: true,
