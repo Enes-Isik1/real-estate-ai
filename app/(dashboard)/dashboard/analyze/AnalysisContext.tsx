@@ -137,15 +137,59 @@ export function AnalysisProvider({
         const errorData = await response.json().catch(() => null);
         throw new Error(
           errorData?.error ||
-            "Die Analyse konnte nicht abgeschlossen werden. Bitte versuchen Sie es erneut.",
+            "Die Analyse konnte nicht gestartet werden. Bitte versuchen Sie es erneut.",
         );
       }
 
       const data = await response.json();
 
-      setProperty(data.property);
-      setChunks(data.chunks || []);
-      setUploadedData(data);
+      // 🔄 Falls die Analyse im Hintergrund läuft (Job-Based Async Workflow)
+      if (data.async && data.dealId) {
+        console.log(
+          `[Job] Warte auf Hintergrund-Job für Deal ${data.dealId}...`,
+        );
+
+        let attempts = 0;
+        const maxAttempts = 30; // Max ~60 Sekunden warten
+        let jobCompleted = false;
+
+        while (attempts < maxAttempts && !jobCompleted) {
+          await new Promise((resolve) => setTimeout(resolve, 2000)); // 2s Intervall
+          attempts++;
+
+          // Lade den fertigen Deal + Analyse aus der Supabase DB / API
+          const dealRes = await fetch(`/api/deals/${data.dealId}`);
+          if (dealRes.ok) {
+            const dealData = await dealRes.json();
+
+            // Sobald die Analyse in der DB fertig abgelegt ist:
+            if (dealData?.latestAnalysis) {
+              setUploadedData({
+                success: true,
+                property: dealData.property,
+                chunks: dealData.chunks || [],
+                analysis: dealData.latestAnalysis.raw_json,
+              });
+              setProperty(dealData.property);
+              setChunks(dealData.chunks || []);
+              jobCompleted = true;
+              break;
+            }
+          }
+        }
+
+        if (!jobCompleted) {
+          throw new Error(
+            "Die Hintergrund-Analyse dauert ungewöhnlich lange. Bitte prüfen Sie die Ansicht in ein paar Sekunden erneut.",
+          );
+        }
+      } else {
+        // Direkte Antwort (Synchroner Fallback)
+        setProperty(data.property);
+        setChunks(data.chunks || []);
+        setUploadedData(data);
+      }
+
       setIsLoading(false);
     } catch (err: any) {
       if (err.message === "Failed to fetch") {
