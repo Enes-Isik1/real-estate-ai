@@ -3,9 +3,9 @@ import { AnalysisData } from "./types/analysis";
 
 const API_KEY = process.env.GEMINI_API_KEY;
 
-// Enterprise Fallback-Hierarchie für Modelle
+// Nur das stabile Flash-Modell ohne fehleranfällige Fallbacks
 const PRIMARY_MODEL = "gemini-1.5-flash";
-const FALLBACK_MODELS = ["gemini-1.5-pro"];
+const FALLBACK_MODELS: string[] = [];
 
 /**
  * Extrem kompakter Filter für das Free Tier, um Token-Limits (TPM) nicht zu sprengen.
