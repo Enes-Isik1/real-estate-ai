@@ -6,11 +6,7 @@ const API_KEY = process.env.GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(API_KEY || "");
 
 // Enterprise Modell-Kaskade mit den neuesten Standard-IDs
-const MODEL_CANDIDATES = [
-  "gemini-3.8-flash",
-  "gemini-1.5-flash",
-  "gemini-1.5-pro",
-];
+const MODEL_CANDIDATES = ["gemini-3.8-flash"];
 
 /**
  * Extrem kompakter Filter für das Free Tier, um Token-Limits (TPM) nicht zu sprengen.
