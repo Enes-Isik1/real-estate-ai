@@ -154,7 +154,7 @@ export function AnalysisProvider({
         let jobCompleted = false;
 
         while (attempts < maxAttempts && !jobCompleted) {
-          await new Promise((resolve) => setTimeout(resolve, 2000)); // 2s Intervall
+          await new Promise((resolve) => setTimeout(resolve, 1000)); // 2s Intervall
           attempts++;
 
           // Lade den fertigen Deal + Analyse aus der Supabase DB / API
