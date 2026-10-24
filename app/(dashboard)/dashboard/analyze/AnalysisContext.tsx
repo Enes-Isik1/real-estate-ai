@@ -150,19 +150,17 @@ export function AnalysisProvider({
         );
 
         let attempts = 0;
-        const maxAttempts = 60; // Max ~60 Sekunden warten
+        const maxAttempts = 90; // 👈 90 Sekunden maximale Wartezeit (reicht dicke für die ~72 Sekunden der Logs)
         let jobCompleted = false;
 
         while (attempts < maxAttempts && !jobCompleted) {
-          await new Promise((resolve) => setTimeout(resolve, 1000)); // 2s Intervall
+          await new Promise((resolve) => setTimeout(resolve, 1000)); // 1s Intervall
           attempts++;
 
-          // Lade den fertigen Deal + Analyse aus der Supabase DB / API
           const dealRes = await fetch(`/api/deals/${data.dealId}`);
           if (dealRes.ok) {
             const dealData = await dealRes.json();
 
-            // Sobald die Analyse in der DB fertig abgelegt ist:
             if (dealData?.latestAnalysis) {
               setUploadedData({
                 success: true,
