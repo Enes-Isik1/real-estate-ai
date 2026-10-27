@@ -4,8 +4,7 @@ import { AnalysisData } from "./types/analysis";
 const API_KEY = process.env.GEMINI_API_KEY;
 
 /**
- * Enterprise-Level Direkt-Fetch zur Google Gemini REST API (100% Bulletproof)
- * Umgeht SDK-Timeouts, fängt Parsing-Fehler ab und garantiert stabile JSON-Antworten.
+ * Enterprise-Level Direkt-Fetch zur Google Gemini REST API mit gemini-3.8-flash
  */
 async function callGeminiWithFallback(
   prompt: string,
@@ -17,8 +16,8 @@ async function callGeminiWithFallback(
     );
   }
 
-  // Wir nutzen den extrem stabilen gemini-1.5-flash REST-Endpoint
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
+  // Korrekter, von Google geforderter REST-Endpoint
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${API_KEY}`;
 
   const requestBody = {
     contents: [
@@ -32,9 +31,7 @@ async function callGeminiWithFallback(
     },
   };
 
-  console.log(
-    "🌐 [AI-Engine] Sende stabilen REST-Fetch an Google Gemini API...",
-  );
+  console.log("🌐 [AI-Engine] Sende REST-Fetch an gemini-3.8-flash...");
 
   try {
     const response = await fetch(url, {
@@ -70,20 +67,12 @@ async function callGeminiWithFallback(
         .trim();
     }
 
-    // JSON-Parsing absichern
-    let parsedJson;
-    try {
-      parsedJson = JSON.parse(cleanedText);
-    } catch (parseErr) {
-      console.error("🔥 JSON-Parsing-Fehler bei KI-Antwort:", cleanedText);
-      throw new Error("Die KI-Antwort konnte nicht als JSON gelesen werden.");
-    }
-
-    console.log("✅ [AI-Engine] Analyse erfolgreich verarbeitet!");
+    const parsedJson = JSON.parse(cleanedText);
+    console.log("✅ [AI-Engine] Analyse mit gemini-3.8-flash erfolgreich!");
     return parsedJson;
   } catch (error: any) {
     console.error(
-      "🔥 [AI-Engine] Kritischer Fehler im API-Call:",
+      "🔥 [AI-Engine] Fehler im API-Call:",
       error?.message || error,
     );
   }
