@@ -5,8 +5,8 @@ import { AnalysisData } from "./types/analysis";
 const API_KEY = process.env.GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(API_KEY || "");
 
-// 🛡️ Korrekte, stabile Google Gemini Modell-Kaskade
-const MODEL_CANDIDATES = ["gemini-2.0-flash", "gemini-1.5-flash"];
+// 🛡️ Das von Google geforderte und unterstützte Modell
+const MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-1.5-flash"];
 
 /**
  * Enterprise Resilience Wrapper: Versucht primäre Modelle, fängt Fehler ab,
