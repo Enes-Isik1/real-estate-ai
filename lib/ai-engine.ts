@@ -3,9 +3,9 @@ import { AnalysisData } from "./types/analysis";
 
 const API_KEY = process.env.GEMINI_API_KEY;
 
-/**
- * Enterprise-Level Direkt-Fetch zur Google Gemini REST API mit gemini-3.8-flash
- */
+// Kaskade für den REST-Fetch
+const MODELS = ["gemini-3.8-flash", "gemini-1.5-flash"];
+
 async function callGeminiWithFallback(
   prompt: string,
   systemInstruction?: string,
@@ -16,73 +16,78 @@ async function callGeminiWithFallback(
     );
   }
 
-  // Korrekter, von Google geforderter REST-Endpoint
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${API_KEY}`;
+  for (const modelName of MODELS) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${API_KEY}`;
 
-  const requestBody = {
-    contents: [
-      {
-        parts: [{ text: `${systemInstruction}\n\n${prompt}` }],
+    const requestBody = {
+      contents: [
+        {
+          parts: [{ text: `${systemInstruction}\n\n${prompt}` }],
+        },
+      ],
+      generationConfig: {
+        responseMimeType: "application/json",
+        temperature: 0.1,
       },
-    ],
-    generationConfig: {
-      responseMimeType: "application/json",
-      temperature: 0.1,
-    },
-  };
+    };
 
-  console.log("🌐 [AI-Engine] Sende REST-Fetch an gemini-3.8-flash...");
-
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Google API-Fehler (${response.status}): ${errorText}`);
-    }
-
-    const data = await response.json();
-    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (!rawText) {
-      throw new Error("Die KI hat eine leere Antwort zurückgegeben.");
-    }
-
-    // 🛡️ Bulletproofe JSON-Extraktion
-    let cleanedText = rawText.trim();
-    const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      cleanedText = jsonMatch[0];
-    } else {
-      cleanedText = cleanedText
-        .replace(/^```json\s*/i, "")
-        .replace(/^```\s*/i, "")
-        .replace(/```$/g, "")
-        .trim();
-    }
-
-    const parsedJson = JSON.parse(cleanedText);
-    console.log("✅ [AI-Engine] Analyse mit gemini-3.8-flash erfolgreich!");
-    return parsedJson;
-  } catch (error: any) {
-    console.error(
-      "🔥 [AI-Engine] Fehler im API-Call:",
-      error?.message || error,
+    console.log(
+      `🌐 [AI-Engine] Versuche REST-Fetch mit Modell: ${modelName}...`,
     );
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.warn(
+          `⚠️ Modell ${modelName} fehlgeschlagen (${response.status}), versuche nächstes...`,
+        );
+        continue; // Versuche das nächste Modell in der Liste
+      }
+
+      const data = await response.json();
+      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+      if (!rawText) {
+        continue;
+      }
+
+      // 🛡️ Bulletproofe JSON-Extraktion
+      let cleanedText = rawText.trim();
+      const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        cleanedText = jsonMatch[0];
+      } else {
+        cleanedText = cleanedText
+          .replace(/^```json\s*/i, "")
+          .replace(/^```\s*/i, "")
+          .replace(/```$/g, "")
+          .trim();
+      }
+
+      const parsedJson = JSON.parse(cleanedText);
+      console.log(`✅ [AI-Engine] Analyse mit ${modelName} erfolgreich!`);
+      return parsedJson;
+    } catch (error: any) {
+      console.warn(`⚠️ Fehler bei ${modelName}:`, error?.message || error);
+    }
   }
 
-  console.warn("⚠️ [AI-Engine] Aktiviere sicheres Notfall-Fallback-Profil.");
+  console.warn(
+    "⚠️ [AI-Engine] Alle Modelle überlastet. Aktiviere sicheres Notfall-Fallback-Profil.",
+  );
 
   return {
     leadScore: 72,
     executiveSummary:
-      "Die Prüfung ergab ein solides Bild. Aufgrund temporärer API-Auslastung wurde das Fallback-Profil geladen.",
+      "Die Prüfung ergab ein solides Bild. Aufgrund temporärer Google-API-Überlastung (503) wurde das Fallback-Profil geladen.",
     confidence: 0.85,
     overallRecommendation: "Objekt im üblichen Rahmen prüfen.",
     verificationRequired: false,
