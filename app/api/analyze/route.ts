@@ -4,6 +4,7 @@ import pdf from "pdf-parse-fork";
 import { PropertyAsset } from "@/lib/types/analysis";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { analyzeCoreData, calculateMultiFactorScore } from "@/lib/ai-engine";
+import { sanitizeDocumentText } from "@/lib/pdf-sanitizer"; // 👈 1. Sanitizer importieren
 import { createClient } from "@/lib/utils/supabase/server";
 import * as Sentry from "@sentry/nextjs";
 
@@ -33,14 +34,20 @@ async function processAnalysisInBackground(
       .update({ status: "processing", updated_at: new Date().toISOString() })
       .eq("id", jobId);
 
-    // 2. KI-Analyse mit sicherem Context aufrufen
+    // ⚡ 2. Hier wird der gesamte Kontext durch den Enterprise-Sanitizer gejagt,
+    // um Bild-Artefakte, Binärmüll und unnötige Tokens vor dem KI-Aufruf zu entfernen!
+    const cleanContext = sanitizeDocumentText(structuredContext, {
+      maxLength: 15000,
+      preserveFinancialKeywords: true,
+    });
+
     const safeStructuredContext =
-      structuredContext.length > 8000
-        ? structuredContext.substring(0, 8000)
-        : structuredContext;
+      cleanContext.length > 8000
+        ? cleanContext.substring(0, 8000)
+        : cleanContext;
 
     console.log(
-      `[Job ${jobId}] 📄 Sende Context mit Länge ${safeStructuredContext.length} an KI...`,
+      `[Job ${jobId}] 📄 Sende optimierten Context mit Länge ${safeStructuredContext.length} an KI...`,
     );
 
     const coreAnalysis = await analyzeCoreData(safeStructuredContext);
