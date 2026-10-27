@@ -1,7 +1,6 @@
 // app/api/analyze/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import pdf from "pdf-parse-fork";
-import { PropertyAsset } from "@/lib/types/analysis";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { analyzeCoreData, calculateMultiFactorScore } from "@/lib/ai-engine";
 import { sanitizeDocumentText } from "@/lib/pdf-sanitizer";
@@ -9,7 +8,7 @@ import { createClient } from "@/lib/utils/supabase/server";
 import * as Sentry from "@sentry/nextjs";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // Erlaubt Vercel bis zu 60 Sekunden Ausführungszeit für den synchronen KI-Call
+export const maxDuration = 60; // Erlaubt Vercel bis zu 60 Sekunden Ausführungszeit
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB Limit
 
@@ -53,7 +52,7 @@ export async function POST(request: NextRequest) {
     const allChunks: any[] = [];
     const fileBuffers: { name: string; buffer: Buffer; type: string }[] = [];
 
-    // Paralleles PDF-Parsing
+    // 1. Paralleles PDF-Parsing (Vollständige Original-Logik)
     const fileProcessingPromises = files.map(async (file) => {
       if (file.size > MAX_FILE_SIZE) {
         throw new Error(`Datei ${file.name} ist zu groß (max 10MB).`);
@@ -75,7 +74,6 @@ export async function POST(request: NextRequest) {
         console.warn(`⚠️ Warnung beim Lesen von ${file.name}:`, pdfErr);
       }
 
-      // Falls kein Text extrahiert werden konnte (z.B. reiner Scan oder schreibgeschützt)
       if (!parsedText || parsedText.trim().length < 20) {
         parsedText = `[HINWEIS: Aus der Datei ${file.name} konnte kein Fließtext extrahiert werden. Es handelt sich möglicherweise um einen Bild-Scan.]`;
       }
@@ -136,6 +134,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // 2. Deal-Ermittlung & Erstellung
     let dealId = existingDealId || null;
     let finalDealTitle = formTitle || "Neue Immobilie";
 
@@ -186,23 +185,18 @@ export async function POST(request: NextRequest) {
       dealId = newDeal.id;
     }
 
-    // ⚡ 1. Kontext durch den Enterprise-Sanitizer bereinigen (Entfernt Bild-Müll & Binärdaten)
+    // 3. ⚡ Enterprise Sanitizer anwenden (Entfernt Bild-Müll, bereinigt Tokens)
     const cleanContext = sanitizeDocumentText(structuredContext, {
       maxLength: 15000,
       preserveFinancialKeywords: true,
     });
 
-    const safeStructuredContext =
-      cleanContext.length > 8000
-        ? cleanContext.substring(0, 8000)
-        : cleanContext;
-
     console.log(
-      `📄 Sende optimierten Context mit Länge ${safeStructuredContext.length} direkt an KI...`,
+      `📄 Sende optimierten Context mit Länge ${cleanContext.length} direkt an KI...`,
     );
 
-    // ⚡ 2. Synchroner KI-Aufruf (hält den Request offen, während die UI im Ladespinner wartet)
-    const coreAnalysis = await analyzeCoreData(safeStructuredContext);
+    // 4. 🤖 Synchroner KI-Aufruf
+    const coreAnalysis = await analyzeCoreData(cleanContext);
 
     if (!coreAnalysis || typeof coreAnalysis.leadScore !== "number") {
       throw new Error("Valide KI-Analyse konnte nicht generiert werden.");
@@ -211,7 +205,7 @@ export async function POST(request: NextRequest) {
     const sanitizedLeadScore = Math.round(Number(coreAnalysis.leadScore));
     const finalStatus = sanitizedLeadScore > 70 ? "Ready" : "Needs Review";
 
-    // 3. Multi-Faktor Sub-Scores zentral berechnen
+    // Multi-Faktor Sub-Scores zentral berechnen
     const multiFactorScore = calculateMultiFactorScore(coreAnalysis);
 
     const aiAnalysis = {
@@ -233,7 +227,7 @@ export async function POST(request: NextRequest) {
       timeline: coreAnalysis.timeline || [],
     };
 
-    // 4. Dokumente in Storage & DB verankern
+    // 5. Dokumente in Storage & DB verankern (Vollständige Original-Logik)
     const documentInserts = [];
     const bucketName = "deal-documents";
 
@@ -273,7 +267,7 @@ export async function POST(request: NextRequest) {
       await supabaseAdmin.from("documents").insert(documentInserts);
     }
 
-    // 5. Analyse in DB speichern
+    // 6. Analyse in DB speichern
     const { count: existingAnalysesCount } = await supabaseAdmin
       .from("analyses")
       .select("*", { count: "exact", head: true })
@@ -298,7 +292,7 @@ export async function POST(request: NextRequest) {
 
     if (analysisError) throw analysisError;
 
-    // 6. Risiken speichern
+    // 7. Risiken speichern
     if (
       aiAnalysis.topRisks &&
       aiAnalysis.topRisks.length > 0 &&
@@ -323,7 +317,7 @@ export async function POST(request: NextRequest) {
       await supabaseAdmin.from("risks").insert(riskInserts);
     }
 
-    // 7. Deal Status aktualisieren
+    // 8. Deal Status aktualisieren
     await supabaseAdmin
       .from("deals")
       .update({ status: finalStatus })
@@ -333,7 +327,7 @@ export async function POST(request: NextRequest) {
       `✅ Analyse ERFOLGREICH abgeschlossen mit Score: ${sanitizedLeadScore}`,
     );
 
-    // ⚡ 8. Direkte HTTP-Antwort mit allen Analyse-Ergebnissen an das Frontend zurückgeben!
+    // 9. Direkte HTTP-Antwort an das Frontend
     return NextResponse.json({
       success: true,
       dealId: dealId,

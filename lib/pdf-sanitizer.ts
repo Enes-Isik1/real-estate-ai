@@ -1,7 +1,7 @@
 /**
  * Enterprise-Level PDF & Text Sanitizer
- * Entfernt visuelle Artefakte, Bild-Metadaten, Base64-Reste und optimiert
- * den rohen Dokumenten-Text für hochpräzise und schnelle LLM-Analysen.
+ * Entfernt visuelle Artefakte, Bild-Metadaten, Base64-Reste, Unicode-Müll
+ * und optimiert den rohen Dokumenten-Text für hochpräzise und schnelle LLM-Analysen.
  */
 
 export interface SanitizerOptions {
@@ -15,7 +15,7 @@ const DEFAULT_OPTIONS: SanitizerOptions = {
 };
 
 /**
- * Bereinigt rohen PDF- oder Dokumenten-Text von Binärmüll, Bild-Headern und Grafiktags.
+ * Bereinigt rohen PDF- oder Dokumenten-Text von Binärmüll, Unicode-Anomalien und Bild-Headern.
  */
 export function sanitizeDocumentText(
   rawText: string,
@@ -29,24 +29,27 @@ export function sanitizeDocumentText(
   const config = { ...DEFAULT_OPTIONS, ...options };
 
   let cleaned = rawText
-    // 1. Entferne Base64-Codierungen oder Bild-Stream-Reste aus PDFs
+    // 1. Unicode-Normalisierung (gleicht kaputte PDF-Zeichensätze & Ligaturen aus)
+    .normalize("NFKC")
+    // 2. Entferne Base64-Codierungen und Bild-Stream-Reste aus PDFs
     .replace(/\/Im\d+\s+Do/g, "")
     .replace(/data:image\/[a-zA-Z]+;base64,[^\s]+/g, "[BILD-DATEN ENTFERNT]")
-    // 2. Entferne überschüssige Steuerzeichen, Hex-Artefakte und Null-Bytes
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
-    // 3. Normalisiere mehrfache Leerzeichen und Zeilenumbrüche (reduziert Dateigröße drastisch)
+    // 3. Entferne unsichtbare Steuerzeichen, Zero-Width-Spaces, Soft-Hyphens und Null-Bytes
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u00AD\u200B-\u200D\uFEFF]/g, "")
+    // 4. Bereinige typische PDF-Kopf-/Fußzeilen-Artefakte (z.B. "Seite X von Y")
+    .replace(/Seite\s+\d+\s+von\s+\d+/gi, "")
+    // 5. Normalisiere mehrfache Leerzeichen und horizontale Tabs
     .replace(/[ \t]+/g, " ")
-    .replace(/\n\s*\n/g, "\n")
+    // 6. Reduziere mehrfache Zeilenumbrüche auf maximal zwei
+    .replace(/\n\s*\n\s*\n+/g, "\n\n")
     .trim();
 
-  // 4. Intelligenter Keyword-Filter, falls das Dokument zu groß ist
-  if (
-    config.preserveFinancialKeywords &&
-    cleaned.length > (config.maxLength || 15000)
-  ) {
-    cleaned = smartExtractRelevantSections(cleaned, config.maxLength || 15000);
-  } else if (cleaned.length > (config.maxLength || 15000)) {
-    cleaned = cleaned.substring(0, config.maxLength);
+  // 7. Intelligenter Keyword-Filter auf Absatz-Basis, falls das Dokument das Limit überschreitet
+  const limit = config.maxLength || 15000;
+  if (config.preserveFinancialKeywords && cleaned.length > limit) {
+    cleaned = smartExtractRelevantParagraphs(cleaned, limit);
+  } else if (cleaned.length > limit) {
+    cleaned = cleaned.substring(0, limit);
   }
 
   console.log(
@@ -56,11 +59,16 @@ export function sanitizeDocumentText(
 }
 
 /**
- * Filtert Abschnitte heraus, die für Immobilien- und WEG-Analysen relevant sind,
- * um den Text bei riesigen PDFs präzise zu straffen.
+ * Filtert ganze Absätze (Paragraphs) heraus, die für Immobilien-, WEG- und Finanzanalysen
+ * relevant sind, anstatt willkürlich Zeilen zu zerreißen.
  */
-function smartExtractRelevantSections(text: string, maxLength: number): string {
-  const lines = text.split("\n");
+function smartExtractRelevantParagraphs(
+  text: string,
+  maxLength: number,
+): string {
+  // Unterteilung in logische Absätze (getrennt durch Leerzeilen)
+  const paragraphs = text.split(/\n\s*\n/);
+
   const priorityKeywords = [
     "rücklage",
     "instandhaltung",
@@ -78,36 +86,62 @@ function smartExtractRelevantSections(text: string, maxLength: number): string {
     "genehmigt",
     "ablehnung",
     "eigentümer",
-    "WEG",
+    "weg",
     "haftung",
     "kaufpreis",
     "rendite",
     "miete",
+    "nebenkosten",
+    "fläche",
+    "m²",
   ];
 
-  const scoredLines = lines.map((line) => {
-    const lower = line.toLowerCase();
+  const scoredParagraphs = paragraphs.map((para) => {
+    const lower = para.toLowerCase();
     let score = 0;
+
     for (const keyword of priorityKeywords) {
-      if (lower.includes(keyword)) score += 2;
+      if (lower.includes(keyword)) score += 3;
     }
-    // Allgemeine Sätze mit Zahlen bekommen ebenfalls Priorität (z.B. Beträge, Flächen)
-    if (/\d+([.,]\d+)?\s*(€|eur|qm|m²|prozent|%)?/i.test(line)) {
+
+    // Zahlen, Währungen und Prozentwerte erhöhen die Relevanz (z. B. Beträge, Anteile)
+    if (
+      /\d+([.,]\d+)?\s*(€|eur|qm|m²|prozent|%|\bgesamtkosten\b|\banteil\b)/i.test(
+        para,
+      )
+    ) {
+      score += 2;
+    }
+
+    // Längere Absätze mit Kontext behalten einen Sockelwert
+    if (para.length > 100) {
       score += 1;
     }
-    return { line, score };
+
+    return { paragraph: para.trim(), score };
   });
 
-  // Sortiere nach Relevanz, behalte aber die Reihenfolge grob bei oder nimm Top-Treffer
-  const filtered = scoredLines
-    .filter((item) => item.score > 0 || item.line.length > 50)
-    .map((item) => item.line);
+  // Sortiere primär nach Relevanz-Score (höchste zuerst)
+  scoredParagraphs.sort((a, b) => b.score - a.score);
 
-  const result = filtered.join("\n");
+  let accumulatedLength = 0;
+  const selectedParagraphs: string[] = [];
 
-  if (result.length > maxLength) {
-    return result.substring(0, maxLength);
+  for (const item of scoredParagraphs) {
+    if (item.score <= 0 && item.paragraph.length < 40) continue; // Unwichtigen Müll verwerfen
+
+    if (accumulatedLength + item.paragraph.length + 2 <= maxLength) {
+      selectedParagraphs.push(item.paragraph);
+      accumulatedLength += item.paragraph.length + 2;
+    } else {
+      break;
+    }
   }
 
-  return result.length > 500 ? result : text.substring(0, maxLength);
+  // Falls durch das Filtern zu wenig übrig blieb, Fallback auf den Anfang des Textes
+  if (selectedParagraphs.length === 0) {
+    return text.substring(0, maxLength);
+  }
+
+  return selectedParagraphs.join("\n\n");
 }

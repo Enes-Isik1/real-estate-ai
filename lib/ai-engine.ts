@@ -5,50 +5,12 @@ import { AnalysisData } from "./types/analysis";
 const API_KEY = process.env.GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(API_KEY || "");
 
-// Deine gewünschte Modell-Kaskade (mit Gemini 3.8 Flash an erster Stelle)
-const MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-1.5-flash"];
-
-function smartFilterDocumentContext(rawText: string): string {
-  if (rawText.length <= 4000) return rawText;
-
-  const lines = rawText.split("\n");
-  const relevantKeywords = [
-    "rücklage",
-    "instandhaltung",
-    "wirtschaftsplan",
-    "beschluss",
-    "hausgeld",
-    "sondernutzung",
-    "teilung",
-    "schaden",
-    "sanierung",
-    "aufteilung",
-    "euro",
-    "€",
-    "stimmen",
-    "genehmigt",
-    "ablehnung",
-    "eigentümer",
-    "WEG",
-    "haftung",
-  ];
-
-  const filteredLines = lines.filter((line) => {
-    const lower = line.toLowerCase();
-    return relevantKeywords.some((keyword) => lower.includes(keyword));
-  });
-
-  const result =
-    filteredLines.length > 20
-      ? filteredLines.join("\n").substring(0, 4000)
-      : rawText.substring(0, 4000);
-
-  return result;
-}
+// 🛡️ Korrekte, stabile Google Gemini Modell-Kaskade
+const MODEL_CANDIDATES = ["gemini-2.0-flash", "gemini-1.5-flash"];
 
 /**
- * Enterprise Resilience Wrapper: Versucht zuerst Gemini 3.8 Flash, fängt 503-Fehler ab,
- * wartet kurz (Exponential Backoff) und wechselt bei Bedarf auf 1.5 Flash.
+ * Enterprise Resilience Wrapper: Versucht primäre Modelle, fängt Fehler ab,
+ * nutzt Exponential Backoff und schaltet sauber um.
  */
 async function callGeminiWithFallback(
   prompt: string,
@@ -86,11 +48,18 @@ async function callGeminiWithFallback(
           throw new Error("Die KI hat eine leere Antwort zurückgegeben.");
         }
 
-        const cleanedText = rawText
-          .replace(/^```json\s*/i, "")
-          .replace(/^```\s*/i, "")
-          .replace(/```$/g, "")
-          .trim();
+        // 🛡️ Robuste JSON-Extraktion (findet "{ ... }" im Text unabhängig von Markdown)
+        let cleanedText = rawText.trim();
+        const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          cleanedText = jsonMatch[0];
+        } else {
+          cleanedText = cleanedText
+            .replace(/^```json\s*/i, "")
+            .replace(/^```\s*/i, "")
+            .replace(/```$/g, "")
+            .trim();
+        }
 
         console.log(`✅ KI-Analyse erfolgreich mit Modell ${modelName}!`);
         return JSON.parse(cleanedText);
@@ -100,7 +69,6 @@ async function callGeminiWithFallback(
           `⚠️ Modell ${modelName} Versuch ${attempts} fehlgeschlagen: ${errorMsg}`,
         );
 
-        // Bei 503 (High Demand) oder allgemeinen Lastspitzen kurz warten und wiederholen
         if (attempts < maxAttemptsPerModel) {
           const backoffMs = Math.pow(2, attempts) * 1000; // 2s, dann 4s
           console.log(`⏳ Warte ${backoffMs}ms vor erneutem Versuch...`);
@@ -194,10 +162,9 @@ export function calculateMultiFactorScore(coreAnalysis: any) {
 }
 
 export async function analyzeCoreData(context: string): Promise<AnalysisData> {
-  console.log("🏢 Starte Core-Analyse mit Gemini 3.8 Flash...");
-  const safeContext = smartFilterDocumentContext(context);
+  console.log("🏢 Starte Core-Analyse mit Gemini Flash...");
   const systemInstruction = `Du bist ein deutscher Sachverständiger und WEG-Recht-Experte. Antworte AUSSCHLIESSLICH im validen JSON-Format.`;
-  const prompt = `Analysiere die folgenden Dokumente und gib ein striktes JSON-Objekt zurück:\n{\n  "leadScore": 85,\n  "executiveSummary": "Zusammenfassung",\n  "confidence": 0.95,\n  "overallRecommendation": "Empfehlung",\n  "verificationRequired": false,\n  "topRisks": [],\n  "positiveFindings": [],\n  "missingDocuments": [],\n  "negotiationPoints": [],\n  "sellerQuestions": [],\n  "timeline": [],\n  "crossDocumentConflicts": []\n}\nDOKUMENTE:\n${safeContext}`;
+  const prompt = `Analysiere die folgenden Dokumente und gib ein striktes JSON-Objekt zurück:\n{\n  "leadScore": 85,\n  "executiveSummary": "Zusammenfassung",\n  "confidence": 0.95,\n  "overallRecommendation": "Empfehlung",\n  "verificationRequired": false,\n  "topRisks": [],\n  "positiveFindings": [],\n  "missingDocuments": [],\n  "negotiationPoints": [],\n  "sellerQuestions": [],\n  "timeline": [],\n  "crossDocumentConflicts": []\n}\nDOKUMENTE:\n${context}`;
   return await callGeminiWithFallback(prompt, systemInstruction);
 }
 
@@ -206,8 +173,7 @@ export async function analyzeDeepDiveData(
   schemaString: string,
 ): Promise<AnalysisData> {
   console.log("🔍 Starte Deep Dive...");
-  const safeContext = smartFilterDocumentContext(context);
   const systemInstruction = `Du bist ein Senior Real Estate Analyst. Gib AUSSCHLIESSLICH reines JSON zurück.`;
-  const prompt = `Schema: ${schemaString}\n\nDokumente:\n${safeContext}`;
+  const prompt = `Schema: ${schemaString}\n\nDokumente:\n${context}`;
   return await callGeminiWithFallback(prompt, systemInstruction);
 }
