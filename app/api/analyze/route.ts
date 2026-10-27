@@ -4,215 +4,14 @@ import pdf from "pdf-parse-fork";
 import { PropertyAsset } from "@/lib/types/analysis";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { analyzeCoreData, calculateMultiFactorScore } from "@/lib/ai-engine";
-import { sanitizeDocumentText } from "@/lib/pdf-sanitizer"; // 👈 1. Sanitizer importieren
+import { sanitizeDocumentText } from "@/lib/pdf-sanitizer";
 import { createClient } from "@/lib/utils/supabase/server";
 import * as Sentry from "@sentry/nextjs";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // Erlaubt Vercel bis zu 60 Sekunden Ausführungszeit für den synchronen KI-Call
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB Limit
-
-/**
- * Enterprise Asynchrones Background-Processing für Analysen
- */
-async function processAnalysisInBackground(
-  jobId: string,
-  dealId: string,
-  structuredContext: string,
-  fileBuffers: { name: string; buffer: Buffer; type: string }[],
-  user: any,
-  fileNames: string[],
-  allChunks: any[],
-  finalDealTitle: string,
-) {
-  try {
-    console.log(`[Job ${jobId}] 🚀 Starte Hintergrund-Analyse...`);
-
-    // 1. Job-Status auf "processing" setzen
-    await supabaseAdmin
-      .from("jobs")
-      .update({ status: "processing", updated_at: new Date().toISOString() })
-      .eq("id", jobId);
-
-    // ⚡ 2. Hier wird der gesamte Kontext durch den Enterprise-Sanitizer gejagt,
-    // um Bild-Artefakte, Binärmüll und unnötige Tokens vor dem KI-Aufruf zu entfernen!
-    const cleanContext = sanitizeDocumentText(structuredContext, {
-      maxLength: 15000,
-      preserveFinancialKeywords: true,
-    });
-
-    const safeStructuredContext =
-      cleanContext.length > 8000
-        ? cleanContext.substring(0, 8000)
-        : cleanContext;
-
-    console.log(
-      `[Job ${jobId}] 📄 Sende optimierten Context mit Länge ${safeStructuredContext.length} an KI...`,
-    );
-
-    const coreAnalysis = await analyzeCoreData(safeStructuredContext);
-
-    if (!coreAnalysis || typeof coreAnalysis.leadScore !== "number") {
-      throw new Error("Valide KI-Analyse konnte nicht generiert werden.");
-    }
-
-    const sanitizedLeadScore = Math.round(Number(coreAnalysis.leadScore));
-    const finalStatus = sanitizedLeadScore > 70 ? "Ready" : "Needs Review";
-
-    // 3. Multi-Faktor Sub-Scores zentral berechnen (Single Source of Truth)
-    const multiFactorScore = calculateMultiFactorScore(coreAnalysis);
-
-    const aiAnalysis = {
-      leadScore: sanitizedLeadScore,
-      multiFactorScore,
-      executiveSummary:
-        coreAnalysis.executiveSummary || "Keine Zusammenfassung verfügbar.",
-      overallRecommendation:
-        coreAnalysis.overallRecommendation || "Solides Objekt.",
-      confidence: coreAnalysis.confidence || 0.9,
-      verificationRequired: coreAnalysis.verificationRequired || false,
-      topRisks: coreAnalysis.topRisks || [],
-      crossDocumentConflicts: coreAnalysis.crossDocumentConflicts || [],
-      nextActions: coreAnalysis.nextActions || [],
-      positiveFindings: coreAnalysis.positiveFindings || [],
-      missingDocuments: coreAnalysis.missingDocuments || [],
-      negotiationPoints: coreAnalysis.negotiationPoints || [],
-      sellerQuestions: coreAnalysis.sellerQuestions || [],
-      timeline: coreAnalysis.timeline || [],
-    };
-
-    // 4. Dokumente in Storage & DB verankern
-    const documentInserts = [];
-    const bucketName = "deal-documents";
-
-    for (const fileObj of fileBuffers) {
-      const uniqueFileName = `${dealId}/${Date.now()}_${fileObj.name}`;
-
-      const { error: storageError } = await supabaseAdmin.storage
-        .from(bucketName)
-        .upload(uniqueFileName, fileObj.buffer, {
-          contentType: fileObj.type,
-          upsert: true,
-        });
-
-      let publicUrl = null;
-      if (!storageError) {
-        const { data: urlData } = supabaseAdmin.storage
-          .from(bucketName)
-          .getPublicUrl(uniqueFileName);
-        publicUrl = urlData?.publicUrl || null;
-      }
-
-      const matchedDoc = coreAnalysis.classifiedDocuments?.find(
-        (d: any) => d.filename === fileObj.name,
-      );
-
-      documentInserts.push({
-        deal_id: dealId,
-        filename: fileObj.name,
-        document_type: matchedDoc?.detectedType || "Sonstiges",
-        storage_path: uniqueFileName,
-        public_url: publicUrl,
-        upload_date: new Date().toISOString(),
-      });
-    }
-
-    if (documentInserts.length > 0) {
-      await supabaseAdmin.from("documents").insert(documentInserts);
-    }
-
-    // 5. Analyse in DB speichern
-    const { count: existingAnalysesCount } = await supabaseAdmin
-      .from("analyses")
-      .select("*", { count: "exact", head: true })
-      .eq("deal_id", dealId);
-
-    const nextVersion = (existingAnalysesCount || 0) + 1;
-
-    const { data: savedAnalysis, error: analysisError } = await supabaseAdmin
-      .from("analyses")
-      .insert([
-        {
-          deal_id: dealId,
-          version: nextVersion,
-          lead_score: sanitizedLeadScore,
-          executive_summary: aiAnalysis.executiveSummary,
-          overall_recommendation: aiAnalysis.overallRecommendation,
-          raw_json: aiAnalysis,
-        },
-      ])
-      .select()
-      .single();
-
-    if (analysisError) throw analysisError;
-
-    // 6. Risiken speichern
-    if (
-      aiAnalysis.topRisks &&
-      aiAnalysis.topRisks.length > 0 &&
-      savedAnalysis
-    ) {
-      const riskInserts = aiAnalysis.topRisks.map((risk: any) => {
-        const rawPage = risk.source?.pageNumber || risk.page || 1;
-        const parsedPage =
-          typeof rawPage === "number" ? rawPage : parseInt(rawPage);
-
-        return {
-          analysis_id: savedAnalysis.id,
-          deal_id: dealId,
-          severity: risk.severity || "Medium",
-          title: risk.title,
-          why_it_matters: risk.whyItMatters,
-          confidence: risk.confidence || 90,
-          page_number: isNaN(parsedPage) ? 1 : parsedPage,
-        };
-      });
-
-      await supabaseAdmin.from("risks").insert(riskInserts);
-    }
-
-    // 7. Deal Status aktualisieren
-    await supabaseAdmin
-      .from("deals")
-      .update({ status: finalStatus })
-      .eq("id", dealId);
-
-    // 8. Job als abgeschlossen markieren
-    await supabaseAdmin
-      .from("jobs")
-      .update({
-        status: "completed",
-        result: {
-          dealId,
-          leadScore: sanitizedLeadScore,
-          status: finalStatus,
-        },
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", jobId);
-
-    console.log(
-      `[Job ${jobId}] ✅ Hintergrund-Analyse ERFOLGREICH abgeschlossen mit Score: ${sanitizedLeadScore}`,
-    );
-  } catch (err: any) {
-    console.error(`[Job ${jobId}] 🔥 FEHLER in Hintergrund-Analyse:`, err);
-    Sentry.captureException(err);
-
-    await supabaseAdmin
-      .from("deals")
-      .update({ status: "Error" })
-      .eq("id", dealId);
-
-    await supabaseAdmin
-      .from("jobs")
-      .update({
-        status: "failed",
-        error_message: err?.message || "Analyse fehlgeschlagen.",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", jobId);
-  }
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -387,51 +186,166 @@ export async function POST(request: NextRequest) {
       dealId = newDeal.id;
     }
 
-    // 🚀 Job in Supabase anlegen
-    const { data: job, error: jobError } = await supabaseAdmin
-      .from("jobs")
+    // ⚡ 1. Kontext durch den Enterprise-Sanitizer bereinigen (Entfernt Bild-Müll & Binärdaten)
+    const cleanContext = sanitizeDocumentText(structuredContext, {
+      maxLength: 15000,
+      preserveFinancialKeywords: true,
+    });
+
+    const safeStructuredContext =
+      cleanContext.length > 8000
+        ? cleanContext.substring(0, 8000)
+        : cleanContext;
+
+    console.log(
+      `📄 Sende optimierten Context mit Länge ${safeStructuredContext.length} direkt an KI...`,
+    );
+
+    // ⚡ 2. Synchroner KI-Aufruf (hält den Request offen, während die UI im Ladespinner wartet)
+    const coreAnalysis = await analyzeCoreData(safeStructuredContext);
+
+    if (!coreAnalysis || typeof coreAnalysis.leadScore !== "number") {
+      throw new Error("Valide KI-Analyse konnte nicht generiert werden.");
+    }
+
+    const sanitizedLeadScore = Math.round(Number(coreAnalysis.leadScore));
+    const finalStatus = sanitizedLeadScore > 70 ? "Ready" : "Needs Review";
+
+    // 3. Multi-Faktor Sub-Scores zentral berechnen
+    const multiFactorScore = calculateMultiFactorScore(coreAnalysis);
+
+    const aiAnalysis = {
+      leadScore: sanitizedLeadScore,
+      multiFactorScore,
+      executiveSummary:
+        coreAnalysis.executiveSummary || "Keine Zusammenfassung verfügbar.",
+      overallRecommendation:
+        coreAnalysis.overallRecommendation || "Solides Objekt.",
+      confidence: coreAnalysis.confidence || 0.9,
+      verificationRequired: coreAnalysis.verificationRequired || false,
+      topRisks: coreAnalysis.topRisks || [],
+      crossDocumentConflicts: coreAnalysis.crossDocumentConflicts || [],
+      nextActions: coreAnalysis.nextActions || [],
+      positiveFindings: coreAnalysis.positiveFindings || [],
+      missingDocuments: coreAnalysis.missingDocuments || [],
+      negotiationPoints: coreAnalysis.negotiationPoints || [],
+      sellerQuestions: coreAnalysis.sellerQuestions || [],
+      timeline: coreAnalysis.timeline || [],
+    };
+
+    // 4. Dokumente in Storage & DB verankern
+    const documentInserts = [];
+    const bucketName = "deal-documents";
+
+    for (const fileObj of fileBuffers) {
+      const uniqueFileName = `${dealId}/${Date.now()}_${fileObj.name}`;
+
+      const { error: storageError } = await supabaseAdmin.storage
+        .from(bucketName)
+        .upload(uniqueFileName, fileObj.buffer, {
+          contentType: fileObj.type,
+          upsert: true,
+        });
+
+      let publicUrl = null;
+      if (!storageError) {
+        const { data: urlData } = supabaseAdmin.storage
+          .from(bucketName)
+          .getPublicUrl(uniqueFileName);
+        publicUrl = urlData?.publicUrl || null;
+      }
+
+      const matchedDoc = coreAnalysis.classifiedDocuments?.find(
+        (d: any) => d.filename === fileObj.name,
+      );
+
+      documentInserts.push({
+        deal_id: dealId,
+        filename: fileObj.name,
+        document_type: matchedDoc?.detectedType || "Sonstiges",
+        storage_path: uniqueFileName,
+        public_url: publicUrl,
+        upload_date: new Date().toISOString(),
+      });
+    }
+
+    if (documentInserts.length > 0) {
+      await supabaseAdmin.from("documents").insert(documentInserts);
+    }
+
+    // 5. Analyse in DB speichern
+    const { count: existingAnalysesCount } = await supabaseAdmin
+      .from("analyses")
+      .select("*", { count: "exact", head: true })
+      .eq("deal_id", dealId);
+
+    const nextVersion = (existingAnalysesCount || 0) + 1;
+
+    const { data: savedAnalysis, error: analysisError } = await supabaseAdmin
+      .from("analyses")
       .insert([
         {
           deal_id: dealId,
-          status: "pending",
+          version: nextVersion,
+          lead_score: sanitizedLeadScore,
+          executive_summary: aiAnalysis.executiveSummary,
+          overall_recommendation: aiAnalysis.overallRecommendation,
+          raw_json: aiAnalysis,
         },
       ])
       .select()
       .single();
 
-    if (jobError) throw jobError;
+    if (analysisError) throw analysisError;
 
-    // ⚡ Vercel / Node echtes non-blocking Asynchronous Execution (OHNE await!)
-    processAnalysisInBackground(
-      job.id,
-      dealId!,
-      structuredContext,
-      fileBuffers,
-      user,
-      fileNames,
-      allChunks,
-      finalDealTitle,
-    ).catch((err) => {
-      console.error(`[Job ${job.id}] Unhandled background error:`, err);
-    });
+    // 6. Risiken speichern
+    if (
+      aiAnalysis.topRisks &&
+      aiAnalysis.topRisks.length > 0 &&
+      savedAnalysis
+    ) {
+      const riskInserts = aiAnalysis.topRisks.map((risk: any) => {
+        const rawPage = risk.source?.pageNumber || risk.page || 1;
+        const parsedPage =
+          typeof rawPage === "number" ? rawPage : parseInt(rawPage);
 
-    // 💥 Sofortige HTTP-Antwort in ~1 Sekunde an den Browser
-    return NextResponse.json(
-      {
-        success: true,
-        async: true,
-        jobId: job.id,
-        dealId: dealId,
-        message: "Analyse wurde im Hintergrund gestartet.",
-      },
-      { status: 202 },
+        return {
+          analysis_id: savedAnalysis.id,
+          deal_id: dealId,
+          severity: risk.severity || "Medium",
+          title: risk.title,
+          why_it_matters: risk.whyItMatters,
+          confidence: risk.confidence || 90,
+          page_number: isNaN(parsedPage) ? 1 : parsedPage,
+        };
+      });
+
+      await supabaseAdmin.from("risks").insert(riskInserts);
+    }
+
+    // 7. Deal Status aktualisieren
+    await supabaseAdmin
+      .from("deals")
+      .update({ status: finalStatus })
+      .eq("id", dealId);
+
+    console.log(
+      `✅ Analyse ERFOLGREICH abgeschlossen mit Score: ${sanitizedLeadScore}`,
     );
+
+    // ⚡ 8. Direkte HTTP-Antwort mit allen Analyse-Ergebnissen an das Frontend zurückgeben!
+    return NextResponse.json({
+      success: true,
+      dealId: dealId,
+      analysis: aiAnalysis,
+      message: "Analyse erfolgreich abgeschlossen.",
+    });
   } catch (error: any) {
     console.error("🔥 KRITISCHER API-FEHLER:", error);
     Sentry.captureException(error);
 
     return NextResponse.json(
-      { error: error?.message || "Fehler beim Starten der Analyse." },
+      { error: error?.message || "Fehler beim Ausführen der Analyse." },
       { status: 500 },
     );
   }
