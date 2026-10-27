@@ -64,13 +64,16 @@ async function callGeminiWithFallback(
         console.log(`✅ KI-Analyse erfolgreich mit Modell ${modelName}!`);
         return JSON.parse(cleanedText);
       } catch (error: any) {
+        // 🔍 Exaktes Logging des Google-API-Fehlers (inkl. Status & Details)
         const errorMsg = error?.message || String(error);
-        console.warn(
-          `⚠️ Modell ${modelName} Versuch ${attempts} fehlgeschlagen: ${errorMsg}`,
+        const errorDetails = error?.status ? ` (Status: ${error.status})` : "";
+        console.error(
+          `🔥 DETAIL-FEHLER bei Modell ${modelName}: ${errorMsg}${errorDetails}`,
+          error,
         );
 
         if (attempts < maxAttemptsPerModel) {
-          const backoffMs = Math.pow(2, attempts) * 1000; // 2s, dann 4s
+          const backoffMs = Math.pow(2, attempts) * 1000;
           console.log(`⏳ Warte ${backoffMs}ms vor erneutem Versuch...`);
           await new Promise((res) => setTimeout(res, backoffMs));
         }
