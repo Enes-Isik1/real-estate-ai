@@ -1,21 +1,25 @@
+// lib/pdf-sanitizer.ts
+
 /**
  * Enterprise-Level PDF & Text Sanitizer
- * Entfernt visuelle Artefakte, Bild-Metadaten, Base64-Reste, Unicode-Müll
- * und optimiert den rohen Dokumenten-Text für hochpräzise und schnelle LLM-Analysen.
+ * Spezialisiert auf WEG-Protokolle, Teilungserklärungen und Immobilien-Unterlagen.
+ * Entfernt OCR-Müll, stellt Worttrennungen wieder her und bewahrt die Dokumentenstruktur.
  */
 
 export interface SanitizerOptions {
   maxLength?: number;
   preserveFinancialKeywords?: boolean;
+  preserveDocumentHeader?: boolean;
 }
 
 const DEFAULT_OPTIONS: SanitizerOptions = {
-  maxLength: 15000, // Maximales Token-Sicheres Limit für den Kontext
+  maxLength: 25000, // Token-Sicheres Kontextfenster für moderne LLMs
   preserveFinancialKeywords: true,
+  preserveDocumentHeader: true,
 };
 
 /**
- * Bereinigt rohen PDF- oder Dokumenten-Text von Binärmüll, Unicode-Anomalien und Bild-Headern.
+ * Bereinigt rohen PDF- oder Dokumenten-Text von Binärmüll, OCR-Fehlern und Ligatur-Schäden.
  */
 export function sanitizeDocumentText(
   rawText: string,
@@ -34,20 +38,27 @@ export function sanitizeDocumentText(
     // 2. Entferne Base64-Codierungen und Bild-Stream-Reste aus PDFs
     .replace(/\/Im\d+\s+Do/g, "")
     .replace(/data:image\/[a-zA-Z]+;base64,[^\s]+/g, "[BILD-DATEN ENTFERNT]")
-    // 3. Entferne unsichtbare Steuerzeichen, Zero-Width-Spaces, Soft-Hyphens und Null-Bytes
+    // 3. OCR-Fix: Wörter reparieren, die am Zeilenende mit Bindestrich getrennt wurden
+    .replace(/(\b[a-zäöüß]+)-\s*\n\s*([a-zäöüß]+\b)/gi, "$1$2")
+    // 4. Entferne unsichtbare Steuerzeichen, Zero-Width-Spaces, Soft-Hyphens und Null-Bytes
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u00AD\u200B-\u200D\uFEFF]/g, "")
-    // 4. Bereinige typische PDF-Kopf-/Fußzeilen-Artefakte (z.B. "Seite X von Y")
-    .replace(/Seite\s+\d+\s+von\s+\d+/gi, "")
-    // 5. Normalisiere mehrfache Leerzeichen und horizontale Tabs
-    .replace(/[ \t]+/g, " ")
-    // 6. Reduziere mehrfache Zeilenumbrüche auf maximal zwei
+    // 5. Bereinige typische PDF-Kopf-/Fußzeilen-Artefakte (z.B. "Seite X von Y", Header-Dateipfade)
+    .replace(/Seite\s+\d+\s+(von||\/)\s+\d+/gi, "")
+    .replace(/[\w.-]+@[\w.-]+\.\w+/g, "[E-MAIL ENTFERNT]") // Schutz sensibler Daten
+    // 6. Normalisiere waagerechte Leerzeichen (behält Zeilenumbrüche für Tabellen bei)
+    .replace(/[ \t]{2,}/g, " ")
+    // 7. Reduziere mehrfache Zeilenumbrüche auf maximal zwei (Absatz-Formatierung erhalten)
     .replace(/\n\s*\n\s*\n+/g, "\n\n")
     .trim();
 
-  // 7. Intelligenter Keyword-Filter auf Absatz-Basis, falls das Dokument das Limit überschreitet
-  const limit = config.maxLength || 15000;
+  // 8. Intelligentes Smart-Extract, falls die Maximallänge überschritten wird
+  const limit = config.maxLength || 25000;
   if (config.preserveFinancialKeywords && cleaned.length > limit) {
-    cleaned = smartExtractRelevantParagraphs(cleaned, limit);
+    cleaned = smartExtractRelevantParagraphs(
+      cleaned,
+      limit,
+      config.preserveDocumentHeader,
+    );
   } else if (cleaned.length > limit) {
     cleaned = cleaned.substring(0, limit);
   }
@@ -59,24 +70,30 @@ export function sanitizeDocumentText(
 }
 
 /**
- * Filtert ganze Absätze (Paragraphs) heraus, die für Immobilien-, WEG- und Finanzanalysen
- * relevant sind, anstatt willkürlich Zeilen zu zerreißen.
+ * Filtert Absätze auf Basis von WEG- und Immobilienspezifischen Metriken,
+ * bewahrt jedoch ZWINGEND die ursprüngliche chronologische Reihenfolge im Dokument!
  */
 function smartExtractRelevantParagraphs(
   text: string,
   maxLength: number,
+  preserveHeader: boolean = true,
 ): string {
-  // Unterteilung in logische Absätze (getrennt durch Leerzeilen)
   const paragraphs = text.split(/\n\s*\n/);
 
+  // Enterprise WEG- & Immobilien-Keyword-Satz
   const priorityKeywords = [
     "rücklage",
     "instandhaltung",
+    "instandhaltungsrücklage",
     "wirtschaftsplan",
     "beschluss",
+    "beschlusssammlung",
     "hausgeld",
     "sondernutzung",
-    "teilung",
+    "sondernutzungsrecht",
+    "teilungserklärung",
+    "gemeinschaftseigentum",
+    "sondereigentum",
     "schaden",
     "sanierung",
     "aufteilung",
@@ -84,8 +101,10 @@ function smartExtractRelevantParagraphs(
     "€",
     "stimmen",
     "genehmigt",
+    "abgelehnt",
     "ablehnung",
     "eigentümer",
+    "eigentümerversammlung",
     "weg",
     "haftung",
     "kaufpreis",
@@ -94,54 +113,76 @@ function smartExtractRelevantParagraphs(
     "nebenkosten",
     "fläche",
     "m²",
+    "sqm",
+    "miteigentumsanteil",
+    "mea",
+    "sonderumlage",
+    "verwalter",
+    "beirat",
+    "grundbuch",
+    "lasten",
+    "dienstbarkeit",
+    "mietrückstand",
+    "klage",
+    "gerichtsverfahren",
   ];
 
-  const scoredParagraphs = paragraphs.map((para) => {
+  // Scoring jedes Absatzes mit Erfassung des ursprünglichen Index
+  const indexedParagraphs = paragraphs.map((para, index) => {
     const lower = para.toLowerCase();
     let score = 0;
+
+    // 🏆 Dokumentenkopf (erste 3 Absätze) automatisch höher gewichten
+    if (preserveHeader && index < 3) {
+      score += 10;
+    }
 
     for (const keyword of priorityKeywords) {
       if (lower.includes(keyword)) score += 3;
     }
 
-    // Zahlen, Währungen und Prozentwerte erhöhen die Relevanz (z. B. Beträge, Anteile)
+    // Zahlen, Beträge und Schlüsselwerte priorisieren
     if (
-      /\d+([.,]\d+)?\s*(€|eur|qm|m²|prozent|%|\bgesamtkosten\b|\banteil\b)/i.test(
+      /\d+([.,]\d+)?\s*(€|eur|qm|m²|prozent|%|\bgesamtkosten\b|\banteil\b|\bmea\b)/i.test(
         para,
       )
     ) {
-      score += 2;
+      score += 3;
     }
 
-    // Längere Absätze mit Kontext behalten einen Sockelwert
-    if (para.length > 100) {
-      score += 1;
+    // Paragrafen & Beschluss-Nummern erkennen (z.B. "TOP 3", "§ 12")
+    if (/(top\s*\d+|§\s*\d+|\bbeschluss\s*\d+)/i.test(para)) {
+      score += 4;
     }
 
-    return { paragraph: para.trim(), score };
+    return { index, paragraph: para.trim(), score, length: para.length };
   });
 
-  // Sortiere primär nach Relevanz-Score (höchste zuerst)
-  scoredParagraphs.sort((a, b) => b.score - a.score);
+  // Nach Relevanz sortieren, um die WICHTIGSTEN Absätze auszuwählen
+  const sortedByScore = [...indexedParagraphs].sort(
+    (a, b) => b.score - a.score,
+  );
 
   let accumulatedLength = 0;
-  const selectedParagraphs: string[] = [];
+  const selectedItems: typeof indexedParagraphs = [];
 
-  for (const item of scoredParagraphs) {
-    if (item.score <= 0 && item.paragraph.length < 40) continue; // Unwichtigen Müll verwerfen
+  for (const item of sortedByScore) {
+    if (item.score <= 0 && item.paragraph.length < 30) continue; // Unwichtige Satzfragmente filtern
 
-    if (accumulatedLength + item.paragraph.length + 2 <= maxLength) {
-      selectedParagraphs.push(item.paragraph);
-      accumulatedLength += item.paragraph.length + 2;
+    if (accumulatedLength + item.length + 2 <= maxLength) {
+      selectedItems.push(item);
+      accumulatedLength += item.length + 2;
     } else {
       break;
     }
   }
 
-  // Falls durch das Filtern zu wenig übrig blieb, Fallback auf den Anfang des Textes
-  if (selectedParagraphs.length === 0) {
+  if (selectedItems.length === 0) {
     return text.substring(0, maxLength);
   }
 
-  return selectedParagraphs.join("\n\n");
+  // 🛡️ REHYDRIERUNG: Sortiere die ausgewählten Absätze wieder nach ihrem URSPRÜNGLICHEN Index!
+  selectedItems.sort((a, b) => a.index - b.index);
+
+  return selectedItems.map((item) => item.paragraph).join("\n\n");
 }

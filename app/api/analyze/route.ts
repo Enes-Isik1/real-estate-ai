@@ -1,19 +1,20 @@
 // app/api/analyze/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import pdf from "pdf-parse-fork";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { analyzeCoreData, calculateMultiFactorScore } from "@/lib/ai-engine";
 import { sanitizeDocumentText } from "@/lib/pdf-sanitizer";
+import { parsePdfBuffer } from "@/lib/pdf-parser";
 import { createClient } from "@/lib/utils/supabase/server";
 import * as Sentry from "@sentry/nextjs";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // Erlaubt Vercel bis zu 60 Sekunden Ausführungszeit
+export const maxDuration = 60; // Vercel Serverless Timeout (60 Sekunden)
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB Limit
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB Limit pro Datei
 
 export async function POST(request: NextRequest) {
   try {
+    // 1. Authentifizierung prüfen
     const supabaseClient = await createClient();
     const {
       data: { user },
@@ -27,6 +28,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // 2. FormData extrahieren & typensicher validieren
     const formData = await request.formData();
     const formTitle = formData.get("title")?.toString().trim();
     const formClientName = formData.get("clientName")?.toString().trim();
@@ -38,11 +40,14 @@ export async function POST(request: NextRequest) {
         ? formData.getAll("file")
         : formData.getAll("files");
 
-    const files = rawFiles as File[];
+    const files = rawFiles.filter(
+      (item): item is File =>
+        typeof item === "object" && item !== null && "arrayBuffer" in item,
+    );
 
     if (files.length === 0) {
       return NextResponse.json(
-        { error: "Keine Dateien hochgeladen." },
+        { error: "Keine gültigen Dateien hochgeladen." },
         { status: 400 },
       );
     }
@@ -52,37 +57,26 @@ export async function POST(request: NextRequest) {
     const allChunks: any[] = [];
     const fileBuffers: { name: string; buffer: Buffer; type: string }[] = [];
 
-    // 1. Paralleles PDF-Parsing (Vollständige Original-Logik)
+    // 3. Paralleles PDF-Parsing über unseren neuen Enterprise PDF-Parser
     const fileProcessingPromises = files.map(async (file) => {
       if (file.size > MAX_FILE_SIZE) {
-        throw new Error(`Datei ${file.name} ist zu groß (max 10MB).`);
+        throw new Error(
+          `Datei "${file.name}" überschreitet das Limit von 10 MB.`,
+        );
       }
 
       const arrayBuffer = await file.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
-      const fileHeader = buffer.toString("utf8", 0, 20);
 
-      if (!fileHeader.includes("PDF") && !fileHeader.includes("pdf")) {
-        return null;
-      }
-
-      let parsedText = "";
-      try {
-        const pdfData = await pdf(buffer);
-        parsedText = pdfData.text || "";
-      } catch (pdfErr) {
-        console.warn(`⚠️ Warnung beim Lesen von ${file.name}:`, pdfErr);
-      }
-
-      if (!parsedText || parsedText.trim().length < 20) {
-        parsedText = `[HINWEIS: Aus der Datei ${file.name} konnte kein Fließtext extrahiert werden. Es handelt sich möglicherweise um einen Bild-Scan.]`;
-      }
+      // Nutzt den ausgelagerten, robusten Parser
+      const parsedResult = await parsePdfBuffer(buffer, file.name);
 
       return {
         name: file.name,
         buffer,
         type: file.type || "application/pdf",
-        text: parsedText,
+        rawText: parsedResult.rawText,
+        chunks: parsedResult.chunks,
       };
     });
 
@@ -91,50 +85,28 @@ export async function POST(request: NextRequest) {
     for (const result of results) {
       if (!result) continue;
 
-      const { name, buffer, type, text: rawText } = result;
-      fileNames.push(name);
-      fileBuffers.push({ name, buffer, type });
+      fileNames.push(result.name);
+      fileBuffers.push({
+        name: result.name,
+        buffer: result.buffer,
+        type: result.type,
+      });
 
-      const pages = rawText.split(/\f/);
-
-      if (pages.length > 1) {
-        pages.forEach((pageText, pageIndex) => {
-          const trimmed = pageText.trim();
-          if (trimmed.length > 0) {
-            const pageNum = pageIndex + 1;
-            allChunks.push({
-              id: crypto.randomUUID(),
-              documentName: name,
-              text: trimmed,
-              pageNumber: pageNum,
-            });
-            structuredContext += `[DOKUMENT: ${name} | SEITE ${pageNum}]\n${trimmed}\n\n`;
-          }
-        });
-      } else {
-        const chunkSize = 2000;
-        for (let i = 0; i < rawText.length; i += chunkSize) {
-          const chunkText = rawText.substring(i, i + chunkSize);
-          const estimatedPage = Math.floor(i / chunkSize) + 1;
-          allChunks.push({
-            id: crypto.randomUUID(),
-            documentName: name,
-            text: chunkText,
-            pageNumber: estimatedPage,
-          });
-          structuredContext += `[DOKUMENT: ${name} | BLOCK ${estimatedPage}]\n${chunkText}\n\n`;
-        }
-      }
+      // Chunks und Kontext für die KI zusammenfügen
+      result.chunks.forEach((chunk) => {
+        allChunks.push(chunk);
+        structuredContext += `[DOKUMENT: ${chunk.documentName} | SEITE ${chunk.pageNumber}]\n${chunk.text}\n\n`;
+      });
     }
 
     if (fileNames.length === 0) {
       return NextResponse.json(
-        { error: "Keine gültigen PDFs gefunden." },
+        { error: "Keine verarbeitbaren PDF-Dateien gefunden." },
         { status: 400 },
       );
     }
 
-    // 2. Deal-Ermittlung & Erstellung
+    // 4. Deal-Ermittlung & DB-Eintrag
     let dealId = existingDealId || null;
     let finalDealTitle = formTitle || "Neue Immobilie";
 
@@ -179,23 +151,26 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (dealError) {
-        throw new Error("Datenbankfehler: " + dealError.message);
+        throw new Error(
+          "Datenbankfehler beim Erstellen des Deals: " + dealError.message,
+        );
       }
 
       dealId = newDeal.id;
     }
 
-    // 3. ⚡ Enterprise Sanitizer anwenden (Entfernt Bild-Müll, bereinigt Tokens)
+    // 5. ⚡ Enterprise Sanitizer anwenden (25.000 Zeichen Limit, Chronologie bewahrt)
     const cleanContext = sanitizeDocumentText(structuredContext, {
-      maxLength: 15000,
+      maxLength: 25000,
       preserveFinancialKeywords: true,
+      preserveDocumentHeader: true,
     });
 
     console.log(
-      `📄 Sende optimierten Context mit Länge ${cleanContext.length} direkt an KI...`,
+      `📄 [API] Sende bereinigten Kontext (Länge: ${cleanContext.length} Zeichen) an KI-Engine...`,
     );
 
-    // 4. 🤖 Synchroner KI-Aufruf
+    // 6. 🤖 KI-Analyse ausführen (mit automatischer Modell-Kaskade)
     const coreAnalysis = await analyzeCoreData(cleanContext);
 
     if (!coreAnalysis || typeof coreAnalysis.leadScore !== "number") {
@@ -205,7 +180,7 @@ export async function POST(request: NextRequest) {
     const sanitizedLeadScore = Math.round(Number(coreAnalysis.leadScore));
     const finalStatus = sanitizedLeadScore > 70 ? "Ready" : "Needs Review";
 
-    // Multi-Faktor Sub-Scores zentral berechnen
+    // Multi-Faktor Sub-Scores berechnen
     const multiFactorScore = calculateMultiFactorScore(coreAnalysis);
 
     const aiAnalysis = {
@@ -227,7 +202,7 @@ export async function POST(request: NextRequest) {
       timeline: coreAnalysis.timeline || [],
     };
 
-    // 5. Dokumente in Storage & DB verankern (Vollständige Original-Logik)
+    // 7. Dokumente in Supabase Storage & DB verankern
     const documentInserts = [];
     const bucketName = "deal-documents";
 
@@ -267,7 +242,7 @@ export async function POST(request: NextRequest) {
       await supabaseAdmin.from("documents").insert(documentInserts);
     }
 
-    // 6. Analyse in DB speichern
+    // 8. Analyse in DB abspeichern
     const { count: existingAnalysesCount } = await supabaseAdmin
       .from("analyses")
       .select("*", { count: "exact", head: true })
@@ -292,7 +267,7 @@ export async function POST(request: NextRequest) {
 
     if (analysisError) throw analysisError;
 
-    // 7. Risiken speichern
+    // 9. Risiken abspeichern
     if (
       aiAnalysis.topRisks &&
       aiAnalysis.topRisks.length > 0 &&
@@ -317,17 +292,17 @@ export async function POST(request: NextRequest) {
       await supabaseAdmin.from("risks").insert(riskInserts);
     }
 
-    // 8. Deal Status aktualisieren
+    // 10. Deal Status aktualisieren
     await supabaseAdmin
       .from("deals")
       .update({ status: finalStatus })
       .eq("id", dealId);
 
     console.log(
-      `✅ Analyse ERFOLGREICH abgeschlossen mit Score: ${sanitizedLeadScore}`,
+      `✅ [API] Analyse ERFOLGREICH abgeschlossen mit Score: ${sanitizedLeadScore}`,
     );
 
-    // 9. Direkte HTTP-Antwort an das Frontend
+    // 11. Erfolgreiche HTTP-Antwort zurückgeben
     return NextResponse.json({
       success: true,
       dealId: dealId,
@@ -335,7 +310,7 @@ export async function POST(request: NextRequest) {
       message: "Analyse erfolgreich abgeschlossen.",
     });
   } catch (error: any) {
-    console.error("🔥 KRITISCHER API-FEHLER:", error);
+    console.error("🔥 [API] KRITISCHER API-FEHLER:", error);
     Sentry.captureException(error);
 
     return NextResponse.json(
