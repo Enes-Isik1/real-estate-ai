@@ -5,12 +5,12 @@ import { AnalysisData } from "./types/analysis";
 const API_KEY = process.env.GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(API_KEY || "");
 
-// 🛡️ Das von Google geforderte und unterstützte Modell
+// 🛡️ Modell-Kaskade (Gemini 3.8 Flash als Primär, 1.5 Flash als Sekundär)
 const MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-1.5-flash"];
 
 /**
- * Enterprise Resilience Wrapper: Versucht primäre Modelle, fängt Fehler ab,
- * nutzt Exponential Backoff und schaltet sauber um.
+ * Timeout-Safe Wrapper: Versucht die Modelle ohne lange Retries,
+ * um das Vercel 60-Sekunden-Limit keinesfalls zu überschreiten.
  */
 async function callGeminiWithFallback(
   prompt: string,
@@ -24,60 +24,43 @@ async function callGeminiWithFallback(
 
   for (const modelName of MODEL_CANDIDATES) {
     console.log(`🤖 Versuche KI-Analyse mit SDK-Modell: ${modelName}...`);
-    let attempts = 0;
-    const maxAttemptsPerModel = 3;
+    try {
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        systemInstruction: systemInstruction,
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.1,
+        },
+      });
 
-    while (attempts < maxAttemptsPerModel) {
-      try {
-        attempts++;
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const rawText = response.text();
 
-        const model = genAI.getGenerativeModel({
-          model: modelName,
-          systemInstruction: systemInstruction,
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0.1,
-          },
-        });
-
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const rawText = response.text();
-
-        if (!rawText) {
-          throw new Error("Die KI hat eine leere Antwort zurückgegeben.");
-        }
-
-        // 🛡️ Robuste JSON-Extraktion (findet "{ ... }" im Text unabhängig von Markdown)
-        let cleanedText = rawText.trim();
-        const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          cleanedText = jsonMatch[0];
-        } else {
-          cleanedText = cleanedText
-            .replace(/^```json\s*/i, "")
-            .replace(/^```\s*/i, "")
-            .replace(/```$/g, "")
-            .trim();
-        }
-
-        console.log(`✅ KI-Analyse erfolgreich mit Modell ${modelName}!`);
-        return JSON.parse(cleanedText);
-      } catch (error: any) {
-        // 🔍 Exaktes Logging des Google-API-Fehlers (inkl. Status & Details)
-        const errorMsg = error?.message || String(error);
-        const errorDetails = error?.status ? ` (Status: ${error.status})` : "";
-        console.error(
-          `🔥 DETAIL-FEHLER bei Modell ${modelName}: ${errorMsg}${errorDetails}`,
-          error,
-        );
-
-        if (attempts < maxAttemptsPerModel) {
-          const backoffMs = Math.pow(2, attempts) * 1000;
-          console.log(`⏳ Warte ${backoffMs}ms vor erneutem Versuch...`);
-          await new Promise((res) => setTimeout(res, backoffMs));
-        }
+      if (!rawText) {
+        throw new Error("Die KI hat eine leere Antwort zurückgegeben.");
       }
+
+      // 🛡️ Robuste JSON-Extraktion
+      let cleanedText = rawText.trim();
+      const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        cleanedText = jsonMatch[0];
+      } else {
+        cleanedText = cleanedText
+          .replace(/^```json\s*/i, "")
+          .replace(/^```\s*/i, "")
+          .replace(/```$/g, "")
+          .trim();
+      }
+
+      console.log(`✅ KI-Analyse erfolgreich mit Modell ${modelName}!`);
+      return JSON.parse(cleanedText);
+    } catch (error: any) {
+      const errorMsg = error?.message || String(error);
+      console.error(`🔥 FEHLER bei Modell ${modelName}: ${errorMsg}`);
+      // Kein langes Warten (Backoff), sondern direkt das nächste Modell in der Kaskade versuchen!
     }
   }
 
