@@ -9,11 +9,12 @@ interface ModelCandidate {
   apiVersion: "v1" | "v1beta";
 }
 
+// 🛡️ Deine intelligente Fallback-Kaskade nach Priorität & Limits
 const MODEL_CANDIDATES: ModelCandidate[] = [
   { name: "gemini-3.8-flash", apiVersion: "v1beta" },
-  { name: "gemini-1.5-flash", apiVersion: "v1beta" },
-  { name: "gemini-1.5-flash", apiVersion: "v1" },
-  { name: "gemini-1.5-pro", apiVersion: "v1beta" },
+  { name: "gemini-3.6-flash", apiVersion: "v1beta" },
+  { name: "gemini-3-flash", apiVersion: "v1beta" },
+  { name: "gemini-3.5-flash-lite", apiVersion: "v1beta" },
 ];
 
 /**
