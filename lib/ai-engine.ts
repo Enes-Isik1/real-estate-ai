@@ -158,29 +158,14 @@ async function callGeminiWithFallback(
     }
   }
 
-  console.warn(
-    "⚠️ [AI-Engine] Alle Modell-Optionen überlastet/unerreichbar. Aktiviere Notfall-Fallback-Profil.",
+  console.error(
+    "❌ [AI-Engine] Alle Modell-Optionen in der Kaskade fehlgeschlagen.",
   );
 
-  // Robuster Notfall-Fallback
-  return sanitizeAnalysisOutput({
-    leadScore: 72,
-    executiveSummary:
-      "Die Prüfung ergab ein solides Bild. Aufgrund temporärer Serverauslastung bei der Schnittstelle wurde das gesicherte Standard-Profil geladen.",
-    confidence: 0.85,
-    overallRecommendation:
-      "Objekt im üblichen Rahmen rechtlich und wirtschaftlich prüfen.",
-    verificationRequired: false,
-    topRisks: [],
-    positiveFindings: [
-      "Dokumentenstruktur erfolgreich eingelesen und bereinigt.",
-    ],
-    missingDocuments: [],
-    negotiationPoints: [],
-    sellerQuestions: [],
-    timeline: [],
-    crossDocumentConflicts: [],
-  });
+  // Echter Fehlerabbruch: Keine Scheinergebnisse oder gefälschten Scores erzeugen!
+  throw new Error(
+    "Die KI-Analyse ist fehlgeschlagen: Alle verfügbaren KI-Modelle waren nicht erreichbar oder überlastet. Bitte versuchen Sie es in Kürze erneut.",
+  );
 }
 
 /**

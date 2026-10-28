@@ -9,15 +9,33 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Deal ID fehlt" }, { status: 400 });
   }
 
+  // 1. Authentifizierung: Eingeloggten User über den Server-Client ermitteln
   const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return NextResponse.json(
+      { error: "Nicht autorisiert. Bitte loggen Sie sich ein." },
+      { status: 401 },
+    );
+  }
+
+  // 2. IDOR-Schutz: Deal abrufen UND explizit auf user_id des eingeloggten Nutzers prüfen
   const { data: deal, error } = await supabase
     .from("deals")
-    .select("*")
+    .select("id, title, user_id")
     .eq("id", dealId)
+    .eq("user_id", user.id)
     .single();
 
   if (error || !deal) {
-    return NextResponse.json({ error: "Deal nicht gefunden" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Deal nicht gefunden oder Zugriff verweigert." },
+      { status: 404 },
+    );
   }
 
   // Hier wird das PDF generiert (oder als HTML-Druckversion formatiert)

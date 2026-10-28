@@ -13,6 +13,9 @@ export const maxDuration = 60; // Vercel Serverless Timeout (60 Sekunden)
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB Limit pro Datei
 
 export async function POST(request: NextRequest) {
+  let dealId: string | null = null;
+  let currentUserId: string | null = null;
+
   try {
     // 1. Authentifizierung prüfen
     const supabaseClient = await createClient();
@@ -28,12 +31,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    currentUserId = user.id;
+
     // 2. FormData extrahieren & typensicher validieren
     const formData = await request.formData();
     const formTitle = formData.get("title")?.toString().trim();
     const formClientName = formData.get("clientName")?.toString().trim();
     const formClientEmail = formData.get("clientEmail")?.toString().trim();
-    const existingDealId = formData.get("dealId")?.toString().trim();
+    const existingDealId = (
+      formData.get("dealId") || formData.get("existingDealId")
+    )
+      ?.toString()
+      .trim();
 
     const rawFiles =
       formData.getAll("file").length > 0
@@ -107,13 +116,14 @@ export async function POST(request: NextRequest) {
     }
 
     // 4. Deal-Ermittlung & DB-Eintrag
-    let dealId = existingDealId || null;
+    dealId = existingDealId || null;
     let finalDealTitle = formTitle || "Neue Immobilie";
 
     if (dealId) {
       const { data: existingDeal, error: fetchError } = await supabaseAdmin
         .from("deals")
-        .select("title")
+        .select("id, title, user_id")
+        .eq("user_id", user.id)
         .eq("id", dealId)
         .single();
 
@@ -129,6 +139,7 @@ export async function POST(request: NextRequest) {
       await supabaseAdmin
         .from("deals")
         .update({ status: "Analyzing" })
+        .eq("user_id", user.id)
         .eq("id", dealId);
     } else {
       const fallbackTitle = fileNames[0]
@@ -296,6 +307,7 @@ export async function POST(request: NextRequest) {
     await supabaseAdmin
       .from("deals")
       .update({ status: finalStatus })
+      .eq("user_id", user.id)
       .eq("id", dealId);
 
     console.log(
@@ -312,6 +324,18 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error("🔥 [API] KRITISCHER API-FEHLER:", error);
     Sentry.captureException(error);
+
+    if (dealId && currentUserId) {
+      try {
+        await supabaseAdmin
+          .from("deals")
+          .update({ status: "Needs Review" })
+          .eq("id", dealId)
+          .eq("user_id", currentUserId);
+      } catch (statusErr) {
+        console.error("Fehler beim Aktualisieren des Deal-Status nach Fehler:", statusErr);
+      }
+    }
 
     return NextResponse.json(
       { error: error?.message || "Fehler beim Ausführen der Analyse." },
