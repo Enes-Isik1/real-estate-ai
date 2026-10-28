@@ -62,6 +62,7 @@ interface Deal {
   analysis?: {
     executiveSummary?: string;
     summary?: string;
+    multiFactorScore?: any;
     risks?: (string | RiskItem)[];
     topRisks?: RiskItem[];
     crossDocumentConflicts?: ConflictItem[];
@@ -203,6 +204,7 @@ export default function DealDetailPage() {
             files: prop.files || [],
             analysis: {
               executiveSummary: prop.analysis?.executiveSummary,
+              multiFactorScore: prop.analysis?.multiFactorScore,
               topRisks: prop.analysis?.topRisks || [],
               crossDocumentConflicts:
                 prop.analysis?.crossDocumentConflicts || [],
